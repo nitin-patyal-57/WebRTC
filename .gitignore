@@ -1,0 +1,35 @@
+# Secrets — never commit
+.env
+*.env
+!*.env.example
+server/.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.pytest_cache/
+
+# Logs
+*.log
+
+# TLS dev certs (regenerate with server/scripts/generate_dev_cert.py)
+server/certs/key.pem
+server/certs/*.pem
+
+# Android / Gradle
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+*.iml
+captures/
+
+# Misc
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

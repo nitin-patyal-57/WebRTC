@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AI Voice Client</string>
+    <string name="server_url_hint">https://192.168.x.x:8443</string>
+    <string name="load">Load</string>
+    <string name="retry">Retry</string>
+    <string name="default_server_url">https://10.0.2.2:8443</string>
+    <string name="status_idle">Ready</string>
+    <string name="empty_title">Connect to your PC server</string>
+    <string name="empty_body">LAN (same Wi‑Fi):\n  https://&lt;PC-IP&gt;:8443\n\nMobile data / remote:\n  Run server\\run_cloud.ps1 on the PC\n  Paste the https://….trycloudflare.com URL\n\nThen tap Load and allow the microphone.</string>
+    <string name="error_title">Could not load server</string>
+</resources>

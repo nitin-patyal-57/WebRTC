@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AI Voice Support</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --green: #3fb950;
+    --red: #f85149;
+    --yellow: #d29922;
+    --blue: #58a6ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", system-ui, sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 24px;
+  }
+  .app { width: 100%; max-width: 720px; }
+  h1 {
+    font-size: 20px;
+    letter-spacing: 3px;
+    font-weight: 600;
+    margin: 0 0 16px;
+    text-align: center;
+    color: var(--blue);
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 14px;
+  }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .dot {
+    width: 12px; height: 12px; border-radius: 50%;
+    background: var(--red); display: inline-block;
+    transition: background .2s;
+  }
+  .dot.on { background: var(--green); }
+  .dot.wait { background: var(--yellow); }
+  #statusText { font-weight: 600; }
+  button {
+    background: #21262d;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 18px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--blue); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: #1f6feb; border-color: #1f6feb; }
+  .label { color: var(--muted); font-size: 13px; }
+  .value { font-size: 14px; font-weight: 600; }
+  .value.on { color: var(--green); }
+  .value.off { color: var(--red); }
+  .dialogue { min-height: 64px; }
+  .speaker { font-size: 12px; letter-spacing: 1px; color: var(--muted); margin-bottom: 4px; }
+  .utterance { font-size: 16px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+  .utterance.partial { color: var(--muted); font-style: italic; }
+  .utterance.ai { color: var(--green); }
+  .divider { height: 1px; background: var(--border); margin: 14px 0; }
+  .latency-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .metric {
+    background: #0d1117;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+  }
+  .metric .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .metric .v { font-size: 16px; font-weight: 700; color: var(--yellow); margin-top: 2px; }
+  .total { font-size: 22px; font-weight: 700; color: var(--blue); margin-top: 10px; }
+  #logBox {
+    font-family: Consolas, monospace;
+    font-size: 12px;
+    color: var(--muted);
+    max-height: 160px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  input[type=text] {
+    background: #0d1117;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 7px 10px;
+    font-size: 14px;
+    width: 200px;
+  }
+  audio { width: 100%; margin-top: 10px; }
+  #historyList { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+  .turn {
+    background: #0d1117;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px;
+  }
+  .turn.active { border-color: var(--blue); }
+  .turn .q { color: var(--text); font-size: 14px; }
+  .turn .a { color: var(--green); font-size: 13px; margin-top: 3px; }
+  .turn .times {
+    display: flex; flex-wrap: wrap; gap: 10px;
+    margin-top: 6px; font-size: 12px; color: var(--muted);
+  }
+  .turn .times b { color: var(--yellow); font-weight: 700; }
+  .empty { color: var(--muted); font-size: 13px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <h1>AI VOICE SUPPORT</h1>
+
+  <div class="panel">
+    <div class="row">
+      <span class="dot" id="statusDot"></span>
+      <span id="statusText">Disconnected</span>
+      <span class="label" style="margin-left:auto">Device</span>
+      <input type="text" id="deviceId" value="TEST_DEVICE_001" />
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="primary" id="btnConnect">Connect</button>
+      <button id="btnDisconnect" disabled>Disconnect</button>
+      <span class="label" style="margin-left:auto">Microphone:</span>
+      <span class="value off" id="micStatus">OFF</span>
+    </div>
+    <audio id="aiAudio" autoplay playsinline></audio>
+  </div>
+
+  <div class="panel dialogue">
+    <div class="speaker">USER</div>
+    <div class="utterance partial" id="userText">—</div>
+    <div class="divider"></div>
+    <div class="speaker">AI</div>
+    <div class="utterance ai" id="aiText">—</div>
+  </div>
+
+  <div class="panel">
+    <div class="label">RESPONSE TIME (this device)</div>
+    <div class="latency-grid">
+      <div class="metric"><div class="k">Ping</div><div class="v" id="mPing">—</div></div>
+      <div class="metric"><div class="k">Connect (offer)</div><div class="v" id="mOffer">—</div></div>
+      <div class="metric"><div class="k">Reply text</div><div class="v" id="mText">—</div></div>
+      <div class="metric"><div class="k">Reply audio</div><div class="v" id="mAudio">—</div></div>
+    </div>
+    <div class="total" id="mTotal">Response: — seconds</div>
+  </div>
+
+  <div class="panel">
+    <div class="label">SERVER BREAKDOWN (PC)</div>
+    <div class="latency-grid">
+      <div class="metric"><div class="k">STT</div><div class="v" id="latSTT">—</div></div>
+      <div class="metric"><div class="k">LLM first token</div><div class="v" id="latLLM">—</div></div>
+      <div class="metric"><div class="k">TTS first audio</div><div class="v" id="latTTS">—</div></div>
+      <div class="metric"><div class="k">Frames in / out</div><div class="v" id="latFrames">0 / 0</div></div>
+    </div>
+    <div class="total" id="latTotal">Server total: — seconds</div>
+  </div>
+
+  <div class="panel">
+    <div class="label">TURN HISTORY</div>
+    <div id="historyList"></div>
+    <div class="empty" id="historyEmpty">No turns yet — speak after Connect.</div>
+  </div>
+
+  <div class="panel">
+    <div class="label" style="margin-bottom:6px">EVENTS</div>
+    <div id="logBox">Ready.</div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+const ui = {
+  statusDot: $("statusDot"),
+  statusText: $("statusText"),
+  btnConnect: $("btnConnect"),
+  btnDisconnect: $("btnDisconnect"),
+  micStatus: $("micStatus"),
+  userText: $("userText"),
+  aiText: $("aiText"),
+  aiAudio: $("aiAudio"),
+  logBox: $("logBox"),
+  latSTT: $("latSTT"),
+  latLLM: $("latLLM"),
+  latTTS: $("latTTS"),
+  latFrames: $("latFrames"),
+  latTotal: $("latTotal"),
+  deviceId: $("deviceId"),
+  mPing: $("mPing"),
+  mOffer: $("mOffer"),
+  mText: $("mText"),
+  mAudio: $("mAudio"),
+  mTotal: $("mTotal"),
+  historyList: $("historyList"),
+  historyEmpty: $("historyEmpty"),
+};
+
+let pc = null;
+let localStream = null;
+let sessionId = null;
+let eventChannel = null;
+let userUtterance = "";
+let aiUtterance = "";
+
+let voiceWs = null;
+let audioCtx = null;
+let micSource = null;
+let workletNode = null;
+let playClock = 0;
+let wsFramesIn = 0;
+let wsFramesOut = 0;
+let transportMode = null;
+
+const turns = [];
+let currentTurn = null;
+let audioArmed = false;
+let pingSamples = [];
+let offerMs = null;
+
+function now() { return performance.now(); }
+
+function log(msg) {
+  const time = new Date().toLocaleTimeString();
+  ui.logBox.textContent = `[${time}] ${msg}\n` + ui.logBox.textContent;
+}
+
+function setStatus(state) {
+  ui.statusDot.className = "dot";
+  if (state === "connected") {
+    ui.statusDot.classList.add("on");
+    ui.statusText.textContent = "Connected";
+  } else if (state === "connecting") {
+    ui.statusDot.classList.add("wait");
+    ui.statusText.textContent = "Connecting…";
+  } else {
+    ui.statusText.textContent = "Disconnected";
+  }
+}
+
+function setMic(on) {
+  ui.micStatus.textContent = on ? "ON" : "OFF";
+  ui.micStatus.className = "value " + (on ? "on" : "off");
+}
+
+function fmtMs(ms) {
+  if (ms === undefined || ms === null || Number.isNaN(ms)) return "—";
+  if (ms >= 1000) return (ms / 1000).toFixed(2) + " s";
+  return Math.round(ms) + " ms";
+}
+
+function beginTurn() {
+  if (currentTurn) finalizeTurn();
+  currentTurn = {
+    id: Date.now(),
+    time: new Date().toLocaleTimeString(),
+    question: userUtterance || "…",
+    answer: "",
+    tSpeechEnd: null,
+    tFinal: null,
+    textMs: null,
+    audioMs: null,
+    server: {},
+    done: false,
+  };
+  audioArmed = false;
+  renderHistory();
+}
+
+function finalizeTurn() {
+  if (!currentTurn || currentTurn.done) return;
+  currentTurn.done = true;
+  currentTurn.answer = (currentTurn.answer || aiUtterance || "").trim() || currentTurn.answer;
+  turns.unshift(currentTurn);
+  if (turns.length > 20) turns.pop();
+  currentTurn = null;
+  audioArmed = false;
+  renderHistory();
+}
+
+function ensureTurn() {
+  if (!currentTurn) beginTurn();
+  return currentTurn;
+}
+
+function renderHistory() {
+  const list = turns.slice();
+  if (currentTurn) list.unshift(currentTurn);
+  ui.historyEmpty.style.display = list.length ? "none" : "block";
+  ui.historyList.innerHTML = list.map((t, i) => {
+    const active = i === 0 && !t.done;
+    const replyText = t.textMs != null ? fmtMs(t.textMs) : "…";
+    const replyAudio = t.audioMs != null ? fmtMs(t.audioMs) : "…";
+    const serverTotal = t.server.total != null ? fmtMs(t.server.total) : "—";
+    const best = t.audioMs != null ? t.audioMs : (t.textMs != null ? t.textMs : null);
+    return `<div class="turn${active ? " active" : ""}">
+      <div class="q"><b>${t.time}</b> — ${escapeHtml(t.question || "…")}</div>
+      <div class="a">${escapeHtml(t.answer || "…")}</div>
+      <div class="times">
+        <span>response <b>${best != null ? fmtMs(best) : "…"}</b></span>
+        <span>text <b>${replyText}</b></span>
+        <span>audio <b>${replyAudio}</b></span>
+        <span>server <b>${serverTotal}</b></span>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[c]);
+}
+
+function updateLiveMetrics() {
+  const t = currentTurn;
+  if (!t) return;
+  ui.mText.textContent = fmtMs(t.textMs);
+  ui.mAudio.textContent = fmtMs(t.audioMs);
+  const best = t.audioMs != null ? t.audioMs : t.textMs;
+  ui.mTotal.textContent = best != null
+    ? "Response: " + (best / 1000).toFixed(2) + " seconds"
+    : "Response: — seconds";
+}
+
+function recordTextReply() {
+  const t = ensureTurn();
+  if (t.textMs == null && t.tSpeechEnd != null) {
+    t.textMs = now() - t.tSpeechEnd;
+    log("Reply text at client: " + fmtMs(t.textMs));
+    updateLiveMetrics();
+    renderHistory();
+  }
+}
+
+function recordAudioReply() {
+  const t = ensureTurn();
+  if (t.audioMs == null && t.tSpeechEnd != null) {
+    t.audioMs = now() - t.tSpeechEnd;
+    log("Reply audio at client: " + fmtMs(t.audioMs));
+    updateLiveMetrics();
+    renderHistory();
+  }
+}
+
+function attachServerMetrics(metrics) {
+  const t = ensureTurn();
+  t.server = Object.assign({}, t.server, metrics || {});
+  if (t.server.total != null) {
+    ui.latTotal.textContent = "Server total: " + (t.server.total / 1000).toFixed(2) + " seconds";
+  }
+  renderHistory();
+}
+
+async function measurePing() {
+  const t0 = now();
+  try {
+    const res = await fetch("/health", { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const rtt = now() - t0;
+    pingSamples.push(rtt);
+    if (pingSamples.length > 10) pingSamples.shift();
+    const avg = pingSamples.reduce((a, b) => a + b, 0) / pingSamples.length;
+    ui.mPing.textContent = fmtMs(avg) + " avg";
+    ui.mPing.title = "last=" + Math.round(rtt) + "ms";
+  } catch (e) {
+    ui.mPing.textContent = "—";
+  }
+}
+
+async function pollAudioLevel() {
+  if (!pc || !currentTurn || currentTurn.audioMs != null || !audioArmed || currentTurn.tSpeechEnd == null) return;
+  try {
+    const report = await pc.getStats();
+    report.forEach((r) => {
+      if (r.type !== "inbound-rtp" || (r.kind && r.kind !== "audio")) return;
+      if (currentTurn.audioMs != null) return;
+      const level = typeof r.audioLevel === "number" ? r.audioLevel : null;
+      if (level != null && level > 0.015) {
+        recordAudioReply();
+        return;
+      }
+    });
+    let energyNow = null;
+    report.forEach((r) => {
+      if (r.type === "inbound-rtp" && (!r.kind || r.kind === "audio") && typeof r.totalAudioEnergy === "number") {
+        energyNow = r.totalAudioEnergy;
+      }
+    });
+    if (energyNow != null && pollAudioLevel._last != null && currentTurn.audioMs == null) {
+      if (energyNow - pollAudioLevel._last > 0.0005) recordAudioReply();
+    }
+    if (energyNow != null) pollAudioLevel._last = energyNow;
+  } catch (e) {}
+}
+
+function handleEvent(evt) {
+  switch (evt.type) {
+    case "partial_transcript":
+      userUtterance = evt.text;
+      ui.userText.textContent = evt.text || "…";
+      ui.userText.className = "utterance partial";
+      break;
+    case "final_transcript":
+      userUtterance = evt.text;
+      ui.userText.textContent = evt.text;
+      ui.userText.className = "utterance";
+      aiUtterance = "";
+      ui.aiText.textContent = "…";
+      const tf = ensureTurn();
+      tf.question = evt.text;
+      tf.tFinal = now();
+      if (tf.tSpeechEnd == null) tf.tSpeechEnd = tf.tFinal;
+      renderHistory();
+      break;
+    case "assistant_delta":
+      if (!currentTurn) beginTurn();
+      aiUtterance += evt.text;
+      currentTurn.answer = aiUtterance;
+      ui.aiText.textContent = aiUtterance;
+      recordTextReply();
+      break;
+    case "assistant_message":
+      if (!currentTurn) beginTurn();
+      aiUtterance = evt.text;
+      currentTurn.answer = evt.text;
+      ui.aiText.textContent = evt.text;
+      recordTextReply();
+      renderHistory();
+      break;
+    case "latency": {
+      const l = evt.metrics || {};
+      ui.latSTT.textContent = fmtMs(l.stt);
+      ui.latLLM.textContent = fmtMs(l.llm_first_token);
+      ui.latTTS.textContent = fmtMs(l.tts_first_audio);
+      ui.latTotal.textContent = "Server total: " + (l.total !== undefined ? (l.total / 1000).toFixed(2) : "—") + " seconds";
+      attachServerMetrics(l);
+      break;
+    }
+    case "stats":
+      ui.latFrames.textContent = `${evt.frames_in || 0} / ${evt.frames_sent || 0}`;
+      break;
+    case "vad":
+      log(`VAD: ${evt.event}`);
+      if (evt.event === "speech_started") {
+        beginTurn();
+        userUtterance = "";
+        aiUtterance = "";
+      } else if (evt.event === "speech_stopped") {
+        const t = ensureTurn();
+        t.tSpeechEnd = now();
+        t.question = userUtterance || t.question;
+        audioArmed = true;
+        log("Response clock started (speech stopped)");
+        renderHistory();
+      }
+      break;
+    case "interrupted":
+      aiUtterance = "";
+      ui.aiText.textContent = "— (interrupted)";
+      if (currentTurn) currentTurn.answer = "(interrupted)";
+      audioArmed = false;
+      log("AI speech interrupted by user");
+      renderHistory();
+      break;
+    case "error":
+      log("Server error: " + evt.message);
+      break;
+    default:
+      log("Event: " + JSON.stringify(evt));
+  }
+}
+
+function attachChannel(channel) {
+  eventChannel = channel;
+  channel.onopen = () => log("Event channel open");
+  channel.onclose = () => log("Event channel closed");
+  channel.onmessage = (e) => {
+    try {
+      handleEvent(JSON.parse(e.data));
+    } catch (err) {
+      log("Bad event payload");
+    }
+  };
+}
+
+function updateFrames() {
+  if (transportMode === "ws") {
+    ui.latFrames.textContent = `${wsFramesIn} / ${wsFramesOut}`;
+  }
+}
+
+function wsUrl() {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const id = encodeURIComponent(ui.deviceId.value.trim() || "TEST_DEVICE_001");
+  const rate = audioCtx && audioCtx.sampleRate ? Math.round(audioCtx.sampleRate) : 48000;
+  return `${proto}//${location.host}/ws?device_id=${id}&sample_rate=${rate}`;
+}
+
+function playPcm(arrayBuffer) {
+  if (!audioCtx) return;
+  const samples = new Int16Array(arrayBuffer);
+  if (!samples.length) return;
+  const buf = audioCtx.createBuffer(1, samples.length, audioCtx.sampleRate);
+  const ch = buf.getChannelData(0);
+  for (let i = 0; i < samples.length; i++) ch[i] = samples[i] / 32768;
+  const src = audioCtx.createBufferSource();
+  src.buffer = buf;
+  src.connect(audioCtx.destination);
+  const t = Math.max(audioCtx.currentTime + 0.01, playClock);
+  src.start(t);
+  playClock = t + buf.duration;
+  wsFramesOut += 1;
+  updateFrames();
+  if (audioArmed && currentTurn && currentTurn.audioMs == null && currentTurn.tSpeechEnd != null) {
+    let peak = 0;
+    const step = Math.max(1, (samples.length / 32) | 0);
+    for (let i = 0; i < samples.length; i += step) peak = Math.max(peak, Math.abs(samples[i]));
+    if (peak > 200) recordAudioReply();
+  }
+}
+
+async function startWsAudio() {
+  audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+  if (audioCtx.state === "suspended") await audioCtx.resume();
+  playClock = 0;
+
+  micSource = audioCtx.createMediaStreamSource(localStream);
+  const workletName = "pcm-capture";
+  const blob = new Blob(
+    [
+      `class PcmCapture extends AudioWorkletProcessor {
+        process(inputs) {
+          const input = inputs[0] && inputs[0][0];
+          if (!input) return true;
+          const out = new Int16Array(input.length);
+          for (let i = 0; i < input.length; i++) {
+            const s = Math.max(-1, Math.min(1, input[i]));
+            out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+          }
+          this.port.postMessage(out.buffer, [out.buffer]);
+          return true;
+        }
+      }
+      registerProcessor('${workletName}', PcmCapture);`,
+    ],
+    { type: "application/javascript" }
+  );
+  await audioCtx.audioWorklet.addModule(URL.createObjectURL(blob));
+  workletNode = new AudioWorkletNode(audioCtx, workletName);
+  workletNode.port.onmessage = (e) => {
+    if (voiceWs && voiceWs.readyState === WebSocket.OPEN) {
+      voiceWs.send(e.data);
+      wsFramesIn += 1;
+      updateFrames();
+    }
+  };
+  micSource.connect(workletNode);
+}
+
+function handleWsMessage(data) {
+  if (typeof data === "string") {
+    try {
+      handleEvent(JSON.parse(data));
+    } catch (e) {
+      log("Bad WS event");
+    }
+    return;
+  }
+  playPcm(data);
+}
+
+async function connectWs() {
+  transportMode = "ws";
+  log("Opening WebSocket audio channel…");
+  const t0 = now();
+  voiceWs = new WebSocket(wsUrl());
+  voiceWs.binaryType = "arraybuffer";
+
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("WebSocket timeout")), 15000);
+    voiceWs.onopen = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    voiceWs.onerror = () => {
+      clearTimeout(timer);
+      reject(new Error("WebSocket error"));
+    };
+  });
+
+  offerMs = now() - t0;
+  ui.mOffer.textContent = fmtMs(offerMs);
+  sessionId = "ws";
+  voiceWs.onmessage = (e) => handleWsMessage(e.data);
+  voiceWs.onclose = () => {
+    log("WebSocket closed");
+    if (transportMode === "ws" && (voiceWs === null || voiceWs.readyState !== 1)) {
+      teardown(false);
+      setStatus("disconnected");
+    }
+  };
+  voiceWs.onerror = () => log("WebSocket error");
+
+  await startWsAudio();
+  setMic(true);
+  setStatus("connected");
+  ui.btnDisconnect.disabled = false;
+  measurePing();
+  log("WebSocket audio connected (works on mobile data)");
+}
+
+async function connectWebRTC() {
+  transportMode = "webrtc";
+  pc = new RTCPeerConnection({
+    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+  });
+
+  pc.onconnectionstatechange = () => {
+    log("Peer state: " + pc.connectionState);
+    if (pc.connectionState === "connected") setStatus("connected");
+    if (["failed", "disconnected", "closed"].includes(pc.connectionState)) {
+      if (pc.connectionState !== "disconnected") teardown(false);
+      else setStatus("connecting");
+    }
+  };
+  pc.oniceconnectionstatechange = () => log("ICE state: " + pc.iceConnectionState);
+
+  pc.ontrack = (event) => {
+    log("AI audio track received: " + event.track.kind);
+    ui.aiAudio.srcObject = event.streams[0] || new MediaStream([event.track]);
+    ui.aiAudio.play().catch(() => log("Autoplay blocked — tap the screen, audio will resume"));
+    document.addEventListener("click", () => ui.aiAudio.play().catch(() => {}), { once: true });
+    document.addEventListener("touchend", () => ui.aiAudio.play().catch(() => {}), { once: true });
+  };
+
+  const channel = pc.createDataChannel("events");
+  attachChannel(channel);
+
+  localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
+
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  log("SDP offer created, sending…");
+
+  const t0 = now();
+  const res = await fetch("/webrtc/offer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      device_id: ui.deviceId.value.trim() || "TEST_DEVICE_001",
+      sdp: offer.sdp,
+      type: "offer",
+    }),
+  });
+  offerMs = now() - t0;
+  ui.mOffer.textContent = fmtMs(offerMs);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || res.statusText);
+  }
+  const answer = await res.json();
+  sessionId = answer.session_id;
+  log("Session: " + sessionId);
+  await pc.setRemoteDescription({ type: answer.type, sdp: answer.sdp });
+  ui.btnDisconnect.disabled = false;
+  measurePing();
+}
+
+async function connect() {
+  if (pc || voiceWs) return;
+  ui.btnConnect.disabled = true;
+  setStatus("connecting");
+  log("Requesting microphone…");
+
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
+    });
+    setMic(true);
+    log("Microphone acquired");
+  } catch (err) {
+    log("Microphone error: " + err.message);
+    setStatus("disconnected");
+    ui.btnConnect.disabled = false;
+    return;
+  }
+
+  try {
+    await connectWs();
+    return;
+  } catch (err) {
+    log("WebSocket failed (" + err.message + "), trying WebRTC…");
+    if (voiceWs) {
+      try { voiceWs.close(); } catch (e) {}
+      voiceWs = null;
+    }
+  }
+
+  try {
+    await connectWebRTC();
+  } catch (err) {
+    log("Connect failed: " + err.message);
+    teardown(false);
+    setStatus("disconnected");
+    ui.btnConnect.disabled = false;
+  }
+}
+
+function teardown(updateUi = true) {
+  finalizeTurn();
+  if (voiceWs) {
+    try {
+      if (voiceWs.readyState === WebSocket.OPEN) voiceWs.send(JSON.stringify({ type: "stop" }));
+      voiceWs.close();
+    } catch (e) {}
+    voiceWs = null;
+  }
+  if (workletNode) {
+    try { workletNode.disconnect(); } catch (e) {}
+    workletNode = null;
+  }
+  if (micSource) {
+    try { micSource.disconnect(); } catch (e) {}
+    micSource = null;
+  }
+  if (pc) {
+    try { pc.close(); } catch (e) {}
+    pc = null;
+  }
+  if (localStream) {
+    localStream.getTracks().forEach((t) => t.stop());
+    localStream = null;
+  }
+  eventChannel = null;
+  audioArmed = false;
+  transportMode = null;
+  sessionId = null;
+  setMic(false);
+  ui.btnConnect.disabled = false;
+  ui.btnDisconnect.disabled = true;
+  ui.aiAudio.srcObject = null;
+  if (updateUi) setStatus("disconnected");
+  log("Disconnected");
+}
+
+async function disconnect() {
+  const wasWs = transportMode === "ws";
+  const id = wasWs ? null : sessionId;
+  teardown();
+  if (id) {
+    try { await fetch("/sessions/" + id, { method: "DELETE" }); } catch (e) {}
+  }
+}
+
+ui.btnConnect.addEventListener("click", connect);
+ui.btnDisconnect.addEventListener("click", disconnect);
+
+setInterval(() => {
+  if (sessionId) measurePing();
+}, 2000);
+
+setInterval(pollAudioLevel, 150);
+
+setInterval(async () => {
+  if (!sessionId || !pc) return;
+  try {
+    const res = await fetch("/sessions/" + sessionId);
+    if (res.ok) {
+      const s = await res.json();
+      ui.latFrames.textContent = `${s.audio_frames_received} / ${s.audio_frames_sent}`;
+    }
+  } catch (e) {}
+}, 1000);
+
+window.addEventListener("beforeunload", () => {
+  if (currentTurn && !currentTurn.done) {
+    currentTurn.answer = currentTurn.answer || aiUtterance || "";
+  }
+});
+</script>
+</body>
+</html>
