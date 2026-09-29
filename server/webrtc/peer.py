@@ -1,4 +1,5 @@
 import asyncio
+import time
 from typing import List
 
 from aiortc import RTCConfiguration, RTCIceServer, RTCPeerConnection
@@ -12,6 +13,7 @@ from webrtc.session import Session, session_manager
 log = get_logger("WEBRTC")
 
 AUDIO_FRAME_LOG_EVERY = 500
+HEARTBEAT_SECONDS = 5.0
 
 
 def build_ice_servers() -> List[RTCIceServer]:
@@ -39,6 +41,7 @@ def build_ice_servers() -> List[RTCIceServer]:
 async def _consume_audio_track(track, session: Session) -> None:
     log.info("[WEBRTC] Audio track received")
     count = 0
+    last_heartbeat = time.monotonic()
     try:
         while True:
             frame = await track.recv()
@@ -50,6 +53,17 @@ async def _consume_audio_track(track, session: Session) -> None:
                 log.info(
                     f"[WEBRTC] First audio frame: {frame.format.name} "
                     f"{frame.sample_rate}Hz ch={channels}"
+                )
+            now = time.monotonic()
+            if now - last_heartbeat >= HEARTBEAT_SECONDS:
+                last_heartbeat = now
+                vad = session.pipeline.vad if session.pipeline is not None else None
+                vad_state = "speech" if vad is not None and vad.is_speech_active else "idle"
+                rms = f"{vad.last_rms:.4f}" if vad is not None else "n/a"
+                log.info(
+                    f"[WEBRTC] Audio heartbeat: frames_in={count} "
+                    f"vad={vad_state} rms={rms} "
+                    f"out={session.audio_frames_sent}"
                 )
             if count % AUDIO_FRAME_LOG_EVERY == 0:
                 log.info(f"[WEBRTC] Audio frames received: {count}")

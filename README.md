@@ -14,6 +14,7 @@ Designed for a smart payment soundbox today; ESP32 + SIM7600 (cellular) later.
 | VAD | Server-side energy/RMS gate (`audio/vad.py`), 300ms min speech / 700ms hangover |
 | STT | Groq `whisper-large-v3-turbo`, VAD-segmented with partials (re-transcribe ≥900ms) |
 | LLM | Groq `openai/gpt-oss-20b`, streaming, short spoken-style system prompt |
+| Knowledge | Curated Soundbox Q&A (`server/data/soundbox_kb.json`); questions similar to the training data are answered with the canned response, otherwise the LLM answers using the same facts |
 | TTS | Sentence-buffered. `groq` = Orpheus; `sapi` = local Windows fallback (active) |
 | Events | WebRTC DataChannel `events` (JSON): transcripts, deltas, latency, vad, interrupted |
 | Latency | Per-turn timers (speech_start → tts_first_audio), sent as `latency` event |
@@ -25,12 +26,12 @@ cd server
 python -m venv .venv
 .\.venv\Scripts\pip install -r requirements.txt
 Copy-Item .env.example .env   # then fill GROQ_API_KEY
-.\.venv\Scripts\uvicorn main:app --host 127.0.0.1 --port 8000
+.\.venv\Scripts\uvicorn main:app --host 127.0.0.1 --port 3000
 ```
 
 Open `client/test-client.html` (or serve it), click **Connect**, allow mic, speak.
 
-- Health: `GET http://127.0.0.1:8000/health`
+- Health: `GET http://127.0.0.1:3000/health`
 - Offer: `POST /webrtc/offer` `{device_id, sdp, type}`
 - Sessions: `GET/DELETE /sessions/{id}`
 
@@ -97,6 +98,7 @@ Verified by automated tests in `server/tests/` (all passing):
 | 4. TTS sentence buffer | `phase4_tts.py` | PASS — synthesis + WAV parsing |
 | 5. AI audio out | `phase5_audio.py` | PASS — non-silent AI frames over WebRTC |
 | 6. Full E2E + barge-in | `phase6_e2e.py` | PASS — speech→reply, interrupt mid-reply, ~1.4s turn latency |
+| 7. Knowledge base | `kb_match.py` | PASS — 103/103 training instructions, 18/18 paraphrases, 0 false matches |
 
 - **Browser mic test: not yet done** (manual step — see above).
 - **TURN: not configured** (STUN only). Fine on LAN; add TURN for real networks/cellular.
@@ -125,7 +127,8 @@ server/
   api/                  /health, /webrtc/offer, /sessions
   webrtc/               Peer connection, session state, AI audio track
   audio/                Resampler (48k→16k), energy VAD
-  services/             Groq STT / LLM / TTS (+ SAPI fallback)
+  services/             Groq STT / LLM / TTS (+ SAPI fallback), knowledge matcher
+  data/                 Soundbox Q&A training data (knowledge base)
   pipeline/             Voice pipeline: loops, barge-in, sentence buffer, latency
   tests/                Phase 1–6 verification scripts
 client/

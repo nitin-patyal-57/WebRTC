@@ -15,6 +15,7 @@ from av import AudioFrame
 from fractions import Fraction
 
 from main import app
+from config import settings
 from services.tts import SapiTTS
 from webrtc.session import session_manager
 
@@ -235,6 +236,8 @@ async def main() -> int:
             if session is None:
                 failures.append("session lost")
             else:
+                # Barge-in is off by default (BARGE_IN=false); enable it for this assertion
+                settings.barge_in = True
                 await session.tts_audio_queue.put(tone_pcm(8.0))
                 await asyncio.sleep(0.4)
                 print(f"[TEST] barge-in speaking while AI playing: {Q2!r}")

@@ -9,7 +9,7 @@ from aiortc import MediaStreamTrack, RTCPeerConnection, RTCSessionDescription
 from aiortc.mediastreams import MediaStreamError
 from av import AudioFrame
 
-SERVER = "http://127.0.0.1:8000"
+SERVER = "http://127.0.0.1:3000"
 DURATION_SEC = 6
 SAMPLE_RATE = 48000
 SAMPLES_PER_FRAME = 480

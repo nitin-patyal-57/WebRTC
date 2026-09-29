@@ -4,9 +4,24 @@ from typing import AsyncIterator, Dict, List, Optional
 from groq import AsyncGroq
 
 from config import SYSTEM_PROMPT, settings
+from services.knowledge import knowledge
 from utils.logger import get_logger
 
 log = get_logger("LLM")
+
+
+def build_system_prompt() -> str:
+    """System prompt plus curated Soundbox device facts (fallback answers)."""
+    facts = knowledge.facts()
+    if not facts:
+        return SYSTEM_PROMPT
+    return (
+        f"{SYSTEM_PROMPT}\n"
+        "Device facts:\n"
+        f"{facts}\n"
+        "When a question is about the Soundbox, its LED, SIM or transactions, "
+        "answer using these facts with the same short wording."
+    )
 
 
 class GroqLLM:
@@ -29,7 +44,7 @@ class GroqLLM:
         """Yield response text chunks. history: session conversation messages."""
         if self._client is None:
             raise RuntimeError("LLM not started")
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}, *history]
+        messages = [{"role": "system", "content": build_system_prompt()}, *history]
         params = dict(
             model=self.model,
             messages=messages,

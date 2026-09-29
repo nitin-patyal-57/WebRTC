@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "_comment": "Questions whose answer never changes. Matched exactly (case/punctuation-insensitive) and answered instantly, skipping KB + LLM. Do NOT put real-time topics here (weather, last transaction, summary, balance...).",
+  "answers": {
+    "good morning": "Good morning! How can I help you today?",
+    "good afternoon": "Good afternoon! How can I help you today?",
+    "good evening": "Good evening! How can I help you today?",
+    "good night": "Good night! Sleep well.",
+    "hello": "Hello! How can I help you today?",
+    "hi": "Hi there! How can I help you today?",
+    "hey": "Hey! How can I help you today?",
+    "how are you": "I'm doing well, thank you! How can I help you?",
+    "how do you do": "I'm doing great, thank you! How can I help you?",
+    "what is your name": "I'm your Soundbox voice assistant. How can I help you?",
+    "who are you": "I'm your Soundbox voice assistant. How can I help you?",
+    "what can you do": "I can help with Soundbox device questions, network and LED status, and transaction announcements. What do you need?",
+    "thank you": "You're welcome! Is there anything else I can help you with?",
+    "thanks": "You're welcome! Is there anything else I can help you with?",
+    "thank you so much": "You're welcome! Is there anything else I can help you with?",
+    "bye": "Goodbye! Have a great day.",
+    "goodbye": "Goodbye! Have a great day.",
+    "see you later": "Goodbye! Have a great day.",
+    "have a nice day": "Thank you, you too! Goodbye."
+  }
+}

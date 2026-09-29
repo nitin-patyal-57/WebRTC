@@ -11,7 +11,7 @@ from audio.vad import EnergyVAD, VADEvent
 from config import settings
 from services.stt import GroqSTT
 
-SERVER = "http://127.0.0.1:8000"
+SERVER = "http://127.0.0.1:3000"
 PHRASE = "What is my payment status?"
 
 

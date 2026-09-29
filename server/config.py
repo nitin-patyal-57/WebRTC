@@ -36,6 +36,23 @@ class Settings:
     max_history_messages: int = field(default_factory=lambda: int(os.getenv("MAX_HISTORY_MESSAGES", "10")))
     vad_silence_ms: int = field(default_factory=lambda: int(os.getenv("VAD_SILENCE_MS", "700")))
     vad_min_speech_ms: int = field(default_factory=lambda: int(os.getenv("VAD_MIN_SPEECH_MS", "300")))
+    vad_threshold: float = field(default_factory=lambda: float(os.getenv("VAD_THRESHOLD", "0.025")))
+    vad_stall_ms: int = field(default_factory=lambda: int(os.getenv("VAD_STALL_MS", "3000")))
+
+    barge_in: bool = field(default_factory=lambda: os.getenv("BARGE_IN", "false").lower() in ("1", "true", "yes", "on"))
+    stt_partials: bool = field(default_factory=lambda: os.getenv("STT_PARTIALS", "false").lower() in ("1", "true", "yes", "on"))
+
+    kb_enabled: bool = field(default_factory=lambda: os.getenv("KB_ENABLED", "true").lower() in ("1", "true", "yes", "on"))
+    kb_match_threshold: float = field(default_factory=lambda: float(os.getenv("KB_MATCH_THRESHOLD", "0.55")))
+
+    fixed_answers_enabled: bool = field(
+        default_factory=lambda: os.getenv("FIXED_ANSWERS_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+    )
+
+    answer_cache_enabled: bool = field(
+        default_factory=lambda: os.getenv("ANSWER_CACHE_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+    )
+    answer_cache_max: int = field(default_factory=lambda: int(os.getenv("ANSWER_CACHE_MAX", "500")))
 
 
 settings = Settings()

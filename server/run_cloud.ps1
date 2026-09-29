@@ -1,5 +1,5 @@
 param(
-    [int]$HttpPort = 8000
+    [int]$HttpPort = 3000
 )
 
 $ErrorActionPreference = "Stop"

@@ -6,6 +6,9 @@ from typing import Optional
 from audio.processor import AudioProcessor
 from audio.vad import EnergyVAD, VADEvent
 from config import settings
+from services.answer_cache import answer_cache
+from services.fixed_answers import fixed_answers
+from services.knowledge import KBMatch, knowledge
 from services.llm import GroqLLM
 from services.stt import GroqSTT
 from services.tts import create_tts
@@ -32,6 +35,7 @@ class VoicePipeline:
         self.vad = EnergyVAD(
             silence_ms=settings.vad_silence_ms,
             min_speech_ms=settings.vad_min_speech_ms,
+            threshold=settings.vad_threshold,
         )
         self.stt: Optional[GroqSTT] = None
         self.llm: Optional[GroqLLM] = None
@@ -42,6 +46,7 @@ class VoicePipeline:
         self._generation = 0
         self._tts_buffer = ""
         self._llm_active = False
+        self._last_audio_time = time.monotonic()
 
     def _ai_in_progress(self) -> bool:
         session = self.session
@@ -85,6 +90,7 @@ class VoicePipeline:
             asyncio.create_task(self._stt_event_loop(), name=f"stt-evt:{session.session_id[:8]}"),
             asyncio.create_task(self._llm_loop(), name=f"llm:{session.session_id[:8]}"),
             asyncio.create_task(self._tts_loop(), name=f"tts:{session.session_id[:8]}"),
+            asyncio.create_task(self._stall_watchdog(), name=f"stall:{session.session_id[:8]}"),
         ]
         log.info(f"[PIPELINE] Started for session {session.session_id}")
 
@@ -138,17 +144,46 @@ class VoicePipeline:
         try:
             while True:
                 frame = await session.audio_queue.get()
+                self._last_audio_time = time.monotonic()
                 for pcm in self.processor.process(frame):
                     events = self.vad.process(pcm)
                     for event in events:
                         await self._handle_vad(event)
                     if self.stt is not None:
                         await self.stt.send_audio(pcm)
-                        await self.stt.maybe_partial()
+                        if settings.stt_partials:
+                            await self.stt.maybe_partial()
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             log.error(f"[PIPELINE] Audio loop error: {exc!r}")
+
+    async def _stall_watchdog(self) -> None:
+        """Force the VAD endpoint when audio stops arriving mid-speech.
+
+        EnergyVAD only advances its silence timer as PCM chunks arrive; if the
+        remote track stalls (screen off, RTP gap) SPEECH_STOPPED never fires and
+        the pipeline hangs. Feed synthetic silence to complete the utterance.
+        """
+        try:
+            while True:
+                await asyncio.sleep(0.5)
+                if not self.vad.is_speech_active:
+                    continue
+                stalled_ms = (time.monotonic() - self._last_audio_time) * 1000.0
+                if stalled_ms < settings.vad_stall_ms:
+                    continue
+                silence_ms = max(settings.vad_silence_ms + 100, 800)
+                pcm = b"\x00" * (16000 * 2 * silence_ms // 1000)
+                log.warning(
+                    f"[VAD] Audio stalled for {stalled_ms:.0f}ms during speech — forcing endpoint"
+                )
+                for event in self.vad.process(pcm):
+                    await self._handle_vad(event)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.error(f"[PIPELINE] Stall watchdog error: {exc!r}")
 
     async def _handle_vad(self, event: VADEvent) -> None:
         session = self.session
@@ -163,7 +198,7 @@ class VoicePipeline:
                 self.stt.mark_speech_start()
             session.send_event({"type": "vad", "event": "speech_started"})
             log.info("[STT] Speech started")
-            if self._ai_in_progress():
+            if settings.barge_in and self._ai_in_progress():
                 await self.interrupt()
         elif event == VADEvent.SPEECH_STOPPED:
             self._user_speaking = False
@@ -223,8 +258,6 @@ class VoicePipeline:
                 user_text = await session.transcript_queue.get()
                 if not user_text:
                     continue
-                if self.llm is None:
-                    continue
 
                 generation = self._generation
                 self._llm_active = True
@@ -232,6 +265,55 @@ class VoicePipeline:
                 from dashboard_store import dashboard
 
                 dashboard.turn_content(session.session_id, question=user_text)
+
+                if settings.fixed_answers_enabled:
+                    fixed = fixed_answers.match(user_text)
+                    if fixed is not None:
+                        log.info(f"[FIXED] Instant answer for: {user_text}")
+                        try:
+                            await self._answer_fixed(session, fixed, generation, dashboard)
+                        except Exception as exc:
+                            log.error(f"[FIXED] Failed to answer: {exc!r}")
+                        finally:
+                            self._llm_active = False
+                            session.mark_stage("llm_end")
+                            await session.llm_text_queue.put((generation, None))
+                        continue
+
+                remembered = answer_cache.match(user_text) if settings.answer_cache_enabled else None
+                if remembered is not None:
+                    log.info(f"[CACHE] Instant remembered answer for: {user_text}")
+                    try:
+                        await self._answer_fixed(session, remembered, generation, dashboard, intent="remembered_answer")
+                    except Exception as exc:
+                        log.error(f"[CACHE] Failed to answer: {exc!r}")
+                    finally:
+                        self._llm_active = False
+                        session.mark_stage("llm_end")
+                        await session.llm_text_queue.put((generation, None))
+                    continue
+
+                match = knowledge.match(user_text) if settings.kb_enabled else None
+                if match is not None:
+                    log.info(
+                        f"[KB] Canned answer intent={match.intent} "
+                        f"score={match.score:.2f} for: {user_text}"
+                    )
+                    try:
+                        await self._answer_from_knowledge(session, match, generation, dashboard)
+                        if settings.answer_cache_enabled:
+                            answer_cache.store(user_text, match.response)
+                    except Exception as exc:
+                        log.error(f"[KB] Failed to answer from knowledge: {exc!r}")
+                    finally:
+                        self._llm_active = False
+                        session.mark_stage("llm_end")
+                        await session.llm_text_queue.put((generation, None))
+                    continue
+
+                if self.llm is None:
+                    continue
+
                 log.info(f"[LLM] Generation started for: {user_text}")
 
                 parts: list[str] = []
@@ -268,11 +350,49 @@ class VoicePipeline:
                         "assistant", answer, max_messages=settings.max_history_messages
                     )
                     session.send_event({"type": "assistant_message", "text": answer})
+                    if settings.answer_cache_enabled:
+                        answer_cache.store(user_text, answer)
                     log.info(f"[LLM] Generation completed: {answer}")
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             log.error(f"[PIPELINE] LLM loop error: {exc!r}")
+
+    async def _answer_fixed(
+        self, session, answer: str, generation: int, dashboard, intent: str = "fixed_answer"
+    ) -> None:
+        """Serve a permanent fixed answer without KB scoring or an LLM call."""
+        session.mark_stage("llm_first_token")
+        session.send_event({"type": "assistant_delta", "text": answer})
+        await session.llm_text_queue.put((generation, answer))
+        dashboard.turn_content(session.session_id, answer=answer)
+        session.add_history(
+            "assistant", answer, max_messages=settings.max_history_messages
+        )
+        session.send_event({"type": "assistant_message", "text": answer})
+        session.send_event({"type": "knowledge", "intent": intent, "led_state": None, "score": 1.0})
+        log.info(f"[FIXED] Answer sent ({intent}): {answer}")
+
+    async def _answer_from_knowledge(self, session, match: KBMatch, generation: int, dashboard) -> None:
+        """Serve a curated Soundbox answer without calling the LLM."""
+        answer = match.response
+        session.mark_stage("llm_first_token")
+        session.send_event({"type": "assistant_delta", "text": answer})
+        await session.llm_text_queue.put((generation, answer))
+        dashboard.turn_content(session.session_id, answer=answer)
+        session.add_history(
+            "assistant", answer, max_messages=settings.max_history_messages
+        )
+        session.send_event({"type": "assistant_message", "text": answer})
+        session.send_event(
+            {
+                "type": "knowledge",
+                "intent": match.intent,
+                "led_state": match.led_state,
+                "score": round(match.score, 3),
+            }
+        )
+        log.info(f"[KB] Answer sent: {answer}")
 
     async def _tts_loop(self) -> None:
         session = self.session

@@ -1,0 +1,262 @@
+{
+  "version": 1,
+  "contexts": {
+    "mqtt": "The Soundbox receives transaction notifications through MQTT and requires network connectivity to receive and announce transactions.",
+    "led_mqtt": "The Soundbox status LED: solid green = turning on, blinking green = SIM not detected, blinking blue = searching for network, solid blue = network connected and ready, blinking red = not connected. The Soundbox receives transaction notifications through MQTT and requires network connectivity to receive and announce transactions.",
+    "network_led": "The Soundbox needs an active network connection to receive transaction notifications via MQTT. The Soundbox status LED: solid green = turning on, blinking green = SIM not detected, blinking blue = searching for network, solid blue = network connected and ready, blinking red = not connected.",
+    "led": "The Soundbox status LED: solid green = turning on, blinking green = SIM not detected, blinking blue = searching for network, solid blue = network connected and ready, blinking red = not connected.",
+    "sim_led": "The Soundbox requires a detected SIM card to connect to the mobile network. The Soundbox status LED: solid green = turning on, blinking green = SIM not detected, blinking blue = searching for network, solid blue = network connected and ready, blinking red = not connected.",
+    "general_led": "General Soundbox device status and troubleshooting. The Soundbox status LED: solid green = turning on, blinking green = SIM not detected, blinking blue = searching for network, solid blue = network connected and ready, blinking red = not connected."
+  },
+  "entries": [
+    {
+      "intent": "transaction_not_announced",
+      "led_state": null,
+      "context": "mqtt",
+      "response": "Please check the Soundbox's network connection and LED status. The Soundbox receives transaction notifications through MQTT, so if it isn't connected to the network, the transaction notification may not reach the device.",
+      "instructions": [
+        "My transaction is not being voiced.",
+        "Payment received but Soundbox didn't announce it.",
+        "My customer paid but there was no voice announcement.",
+        "Why is my transaction not speaking?",
+        "The payment was successful but Soundbox didn't announce it.",
+        "My Soundbox stopped announcing transactions.",
+        "customer payd but no sound came from the machine",
+        "why is my device not telling me about the payment",
+        "soundbox not speaking after payment",
+        "no announcement after successful payment, why?",
+        "the speaker didnt say anything after the payment went thru",
+        "My machine received the money but did not say anything out loud.",
+        "Soundbox silent even though payment shows successful on my phone.",
+        "why the box not talking after transaction",
+        "Payment done, but the device didn't say the amount.",
+        "I got paid but the Soundbox never spoke the transaction.",
+        "My Soundbox is not receiving payments today, any idea why?",
+        "device didnt tell me about the last 2 payments",
+        "customer says paid, soundbox quiet",
+        "no voice output for recent transactions",
+        "transaction went through on my app but soundbox stayed silent",
+        "why does the speaker not say anything after a sale",
+        "sound box not confirming payments out loud anymore",
+        "payment confirmed on phone but soundbox made no sound"
+      ]
+    },
+    {
+      "intent": "transaction_not_received",
+      "led_state": null,
+      "context": "mqtt",
+      "response": "Please check the Soundbox's network connection and LED status. Since transaction notifications arrive through MQTT, the device needs an active network connection to receive them at all.",
+      "instructions": [
+        "Transactions are not coming to my Soundbox.",
+        "My Soundbox is not receiving payments.",
+        "Payment notification is not coming.",
+        "Customer paid but no payment announcement came.",
+        "My device isn't getting any transaction alerts at all.",
+        "None of my payments are reaching the Soundbox today.",
+        "the machine is not getting any transactions since morning"
+      ]
+    },
+    {
+      "intent": "transaction_troubleshooting",
+      "led_state": "blinking_blue",
+      "context": "led_mqtt",
+      "response": "A blinking blue LED means the Soundbox is searching for a network. Please wait for the device to connect. Since transaction notifications are received through MQTT, the transaction may not reach the Soundbox while it is not connected.",
+      "instructions": [
+        "My Soundbox has a blinking blue light and payment is not announced.",
+        "Blue light keeps blinking and my customer's payment wasn't announced.",
+        "blue led blinking, no voice for the payment i got"
+      ]
+    },
+    {
+      "intent": "transaction_troubleshooting",
+      "led_state": "solid_blue",
+      "context": "led_mqtt",
+      "response": "A solid blue LED indicates that the Soundbox is connected to the network and ready to use. Since the device appears to have network connectivity, further transaction or voice troubleshooting may be required.",
+      "instructions": [
+        "My Soundbox has a solid blue light but payment is not announced.",
+        "Light is solid blue, everything looks connected, but no announcement for the payment.",
+        "solid blue light but device still not saying the transaction amount"
+      ]
+    },
+    {
+      "intent": "transaction_troubleshooting",
+      "led_state": "blinking_red",
+      "context": "led_mqtt",
+      "response": "A blinking red LED means the Soundbox is not connected. Since transaction notifications are received through MQTT, the device won't receive or announce transactions while it is disconnected.",
+      "instructions": [
+        "Red light blinking and payment didn't get announced.",
+        "my light is red and blinking, no voice for the payment",
+        "Red blinking light, customer says they paid but nothing announced."
+      ]
+    },
+    {
+      "intent": "transaction_troubleshooting",
+      "led_state": "blinking_green",
+      "context": "led_mqtt",
+      "response": "A blinking green LED means the SIM card was not detected. Please check that the SIM is properly detected, as the Soundbox needs it to connect to the network and receive transaction notifications.",
+      "instructions": [
+        "Green light blinking and Soundbox not announcing anything.",
+        "green led blinking, box not saying the payment out loud"
+      ]
+    },
+    {
+      "intent": "transaction_troubleshooting",
+      "led_state": "solid_green",
+      "context": "led_mqtt",
+      "response": "A solid green LED means the device is still turning on. Please wait for it to finish starting up — once it's ready, check whether the LED turns solid blue before expecting transaction announcements.",
+      "instructions": [
+        "Solid green light, is that why my payment isn't announced?"
+      ]
+    },
+    {
+      "intent": "network_not_connected",
+      "led_state": "blinking_red",
+      "context": "network_led",
+      "response": "A blinking red LED means the Soundbox is not connected. Please check the network in your area and confirm the device has signal, since it needs a connection to receive transactions through MQTT.",
+      "instructions": [
+        "My Soundbox is offline.",
+        "My Soundbox is not connecting to the network.",
+        "Why is the red light blinking?",
+        "device shows red blinking, whats wrong",
+        "my box seems disconnected, red light on",
+        "Soundbox not connected at all, red blinking non stop",
+        "network keeps dropping, red led blinking again and again"
+      ]
+    },
+    {
+      "intent": "network_searching",
+      "led_state": "blinking_blue",
+      "context": "network_led",
+      "response": "A blinking blue LED means the Soundbox is searching for a network. Please wait a moment for it to connect. Once connected, the LED should turn solid blue.",
+      "instructions": [
+        "My Soundbox keeps searching for the network.",
+        "Why is the blue light blinking?",
+        "blue light keeps flashing, is it connecting?",
+        "device stuck on blinking blue for a long time",
+        "my machine won't stop searching for network, blue blinking",
+        "why does the blue led keep blinking and not turn solid"
+      ]
+    },
+    {
+      "intent": "network_connected",
+      "led_state": "solid_blue",
+      "context": "network_led",
+      "response": "Yes, a solid blue LED means the Soundbox is connected to the network and ready to use.",
+      "instructions": [
+        "Is my Soundbox connected now? Light is solid blue.",
+        "solid blue light, does that mean its connected",
+        "Blue light stopped blinking and is now steady, is it ready?",
+        "My device shows a solid blue LED, all good?",
+        "light turned solid blue, is the box online now"
+      ]
+    },
+    {
+      "intent": "led_status_query",
+      "led_state": "solid_green",
+      "context": "led",
+      "response": "A solid green LED means the device is turning on.",
+      "instructions": [
+        "What does solid green mean?",
+        "Why is my green light not blinking, just steady?",
+        "green light is on and not flashing, what does that mean",
+        "solid green led, what's that about"
+      ]
+    },
+    {
+      "intent": "led_status_query",
+      "led_state": "blinking_green",
+      "context": "led",
+      "response": "A blinking green LED means the SIM card was not detected.",
+      "instructions": [
+        "What does blinking green mean?",
+        "Is there a problem with my SIM?",
+        "why is the green light flashing",
+        "green led keeps blinking, sim issue?"
+      ]
+    },
+    {
+      "intent": "led_status_query",
+      "led_state": "blinking_blue",
+      "context": "led",
+      "response": "A blinking blue LED means the device is searching for a network.",
+      "instructions": [
+        "Why is the blue light blinking?",
+        "what does a flashing blue led mean",
+        "blue light flashing on my soundbox, meaning?",
+        "why does my device show blinking blue"
+      ]
+    },
+    {
+      "intent": "led_status_query",
+      "led_state": "solid_blue",
+      "context": "led",
+      "response": "A solid blue LED means the device is connected to the network and ready to use.",
+      "instructions": [
+        "What does solid blue mean?",
+        "blue light is steady, not flashing, what does that indicate",
+        "what does it mean when the blue led stays on",
+        "solid blue led meaning please"
+      ]
+    },
+    {
+      "intent": "led_status_query",
+      "led_state": "blinking_red",
+      "context": "led",
+      "response": "A blinking red LED means the device is not connected.",
+      "instructions": [
+        "Why is the red light blinking?",
+        "what does a flashing red led mean on the soundbox",
+        "red light keeps blinking, what's wrong",
+        "meaning of blinking red light on my device"
+      ]
+    },
+    {
+      "intent": "sim_not_detected",
+      "led_state": "blinking_green",
+      "context": "sim_led",
+      "response": "A blinking green LED means the SIM card was not detected. Please check that the SIM card is properly detected by the device.",
+      "instructions": [
+        "Is there a problem with my SIM card?",
+        "green light blinking, sim card issue?",
+        "does blinking green mean my sim is not working",
+        "my sim card might not be detected, light is flashing green",
+        "sim not detected, whats the fix",
+        "why does it say sim card problem, green light flashing",
+        "green led blinking non stop, sim related?",
+        "is my sim inserted properly, green light keeps blinking",
+        "device can't find my sim card, green blinking led"
+      ]
+    },
+    {
+      "intent": "device_starting",
+      "led_state": "solid_green",
+      "context": "led",
+      "response": "A solid green LED means the device is turning on. This is normal right after power-up — wait for it to finish starting.",
+      "instructions": [
+        "Why is my green light solid, is it starting up?",
+        "green led steady on, is the device booting",
+        "solid green light, is my soundbox turning on",
+        "device just powered on, green light solid, normal?",
+        "just plugged it in, green light is steady, is that ok",
+        "green light on and steady after power on, what's happening"
+      ]
+    },
+    {
+      "intent": "general_soundbox_troubleshooting",
+      "led_state": null,
+      "context": "general_led",
+      "response": "Please start by checking the Soundbox's network connection and LED status. The LED color and pattern can tell you whether the device is starting up, searching for network, missing a SIM, connected and ready, or disconnected.",
+      "instructions": [
+        "My Soundbox is not working properly.",
+        "something seems wrong with my machine today",
+        "soundbox acting weird, what should i check first",
+        "device not behaving normally, any quick checks?",
+        "what should i check if my soundbox has issues",
+        "soundbox trouble, where do i start checking",
+        "my payment device isnt working right, first steps?",
+        "general problem with my soundbox, help",
+        "soundbox not working as expected, what to check"
+      ]
+    }
+  ]
+}

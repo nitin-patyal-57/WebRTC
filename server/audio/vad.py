@@ -40,6 +40,7 @@ class EnergyVAD(VAD):
         self.min_speech_ms = min_speech_ms
         self.threshold = threshold
         self.in_speech = False
+        self.last_rms = 0.0
         self._speech_ms = 0.0
         self._silence_ms = 0.0
 
@@ -67,7 +68,9 @@ class EnergyVAD(VAD):
 
     def process(self, pcm: bytes, sample_rate: int = 16000) -> List[VADEvent]:
         duration_ms = (len(pcm) / 2) / sample_rate * 1000.0
-        loud = self._rms(pcm) >= self.threshold
+        rms = self._rms(pcm)
+        self.last_rms = rms
+        loud = rms >= self.threshold
         events: List[VADEvent] = []
 
         if not self.in_speech:
