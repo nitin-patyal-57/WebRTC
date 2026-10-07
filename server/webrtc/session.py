@@ -44,6 +44,7 @@ class Session:
 
     audio_frames_received: int = 0
     audio_frames_sent: int = 0
+    audio_frames_emitted: int = 0
     ai_playing: bool = False
     state: str = "new"
 
@@ -153,6 +154,9 @@ class Session:
             "state": self.state,
             "audio_frames_received": self.audio_frames_received,
             "audio_frames_sent": self.audio_frames_sent,
+            "audio_frames_emitted": self.audio_frames_emitted,
+            "audio_frames_per_second": 50,
+            "audio_ms_per_second": 1000,
             "history_messages": len(self.conversation_history),
             "latency": dict(self.latency),
             "created_at": self.created_at,
@@ -227,7 +231,9 @@ class SessionManager:
         dashboard.session_close(session_id)
         log.info(
             f"[SESSION] Closed {session_id} device={session.device_id} "
-            f"frames_in={session.audio_frames_received} frames_out={session.audio_frames_sent}"
+            f"frames_in={session.audio_frames_received} "
+            f"frames_out={session.audio_frames_sent} "
+            f"tx_emitted={session.audio_frames_emitted}"
         )
         return True
 

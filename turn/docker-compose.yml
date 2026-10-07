@@ -1,0 +1,29 @@
+# Local TURN via Docker Desktop (Windows/Linux/macOS).
+#
+# Usage:
+#   docker compose -f turn/docker-compose.yml up -d
+#   docker compose -f turn/docker-compose.yml logs -f
+#
+# Router port-forward to this PC (UDP only):
+#   3478        -> STUN/TURN
+#   40000-40100 -> relayed media
+#
+# NOTE: Docker Desktop must be running; allow the Windows Firewall prompt
+# for Docker when first started (or add inbound UDP 3478 + 40000-40100).
+
+services:
+  coturn:
+    image: coturn/coturn:latest
+    container_name: soundbox-turn
+    restart: unless-stopped
+    # -n = no daemon (foreground), config supplies the rest.
+    command: ["-n", "--log-file=stdout", "-c", "/etc/coturn/turnserver.conf"]
+    environment:
+      # Auto-detect public IPv4 for external-ip at startup (behind NAT).
+      DETECT_EXTERNAL_IP: "yes"
+    volumes:
+      - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "40000-40100:40000-40100/udp"

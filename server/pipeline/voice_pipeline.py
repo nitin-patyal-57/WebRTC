@@ -140,23 +140,29 @@ class VoicePipeline:
         log.info(f"[PIPELINE] Interrupted, cleared {cleared} pending items")
 
     async def _audio_loop(self) -> None:
+        # Persistent: an error must never kill input processing (that would
+        # stop all further replies). Only cancellation ends the loop.
+        while True:
+            try:
+                await self._audio_loop_body()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.error(f"[PIPELINE] Audio loop error (continuing): {exc!r}")
+
+    async def _audio_loop_body(self) -> None:
         session = self.session
-        try:
-            while True:
-                frame = await session.audio_queue.get()
-                self._last_audio_time = time.monotonic()
-                for pcm in self.processor.process(frame):
-                    events = self.vad.process(pcm)
-                    for event in events:
-                        await self._handle_vad(event)
-                    if self.stt is not None:
-                        await self.stt.send_audio(pcm)
-                        if settings.stt_partials:
-                            await self.stt.maybe_partial()
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            log.error(f"[PIPELINE] Audio loop error: {exc!r}")
+        while True:
+            frame = await session.audio_queue.get()
+            self._last_audio_time = time.monotonic()
+            for pcm in self.processor.process(frame):
+                events = self.vad.process(pcm)
+                for event in events:
+                    await self._handle_vad(event)
+                if self.stt is not None:
+                    await self.stt.send_audio(pcm)
+                    if settings.stt_partials:
+                        await self.stt.maybe_partial()
 
     async def _stall_watchdog(self) -> None:
         """Force the VAD endpoint when audio stops arriving mid-speech.
@@ -456,4 +462,4 @@ class VoicePipeline:
             log.info("[TTS] First audio received")
             session.emit_latency()
         await session.tts_audio_queue.put(pcm)
-        log.info(f"[TTS] Queued {len(pcm)} bytes ({len(pcm)/2/48000:.2f}s)")
+        log.info(f"[TTS] Queued {len(pcm)} bytes ({len(pcm)/2/8000:.2f}s)")

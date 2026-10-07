@@ -1,7 +1,6 @@
 import asyncio
 import time
 from fractions import Fraction
-from typing import Optional
 
 from aiortc import MediaStreamTrack
 from aiortc.mediastreams import MediaStreamError
@@ -11,11 +10,10 @@ from utils.logger import get_logger
 
 log = get_logger("WEBRTC")
 
-SAMPLE_RATE = 48000
+SAMPLE_RATE = 8000
 CHANNELS = 1
-SAMPLES_PER_FRAME = 960  # 20ms @48kHz
+SAMPLES_PER_FRAME = 160  # 20ms @8kHz
 FRAME_BYTES = SAMPLES_PER_FRAME * 2  # s16 mono
-PTIME = SAMPLES_PER_FRAME / SAMPLE_RATE
 SILENCE_FRAME = b"\x00" * FRAME_BYTES
 
 
@@ -31,6 +29,10 @@ class AIResponseAudioTrack(MediaStreamTrack):
         self.session = session
         self._pending = bytearray()
         self._pts = 0
+        self._pace_start = None
+        self.frames_emitted = 0
+        self._tx_log_t = time.monotonic()
+        self._tx_log_frames = 0
 
     def clear(self) -> None:
         self._pending.clear()
@@ -57,12 +59,24 @@ class AIResponseAudioTrack(MediaStreamTrack):
         if self.readyState == "ended":
             raise MediaStreamError
 
-        start = time.monotonic()
-        while time.monotonic() - start < PTIME:
-            self._drain_queue()
-            remaining = PTIME - (time.monotonic() - start)
-            if remaining > 0:
-                await asyncio.sleep(min(remaining, 0.004))
+        # aiortc's sender sends a packet as fast as recv() returns, so the
+        # track itself must hold the clock: exactly one frame per 20 ms of
+        # wall clock, never early (same pacing as the vendor reference
+        # server). If the event loop stalled more than 0.2 s, re-anchor the
+        # schedule instead of bursting to catch up.
+        now = time.time()
+        if self._pace_start is None:
+            self._pace_start = now
+        else:
+            wait = self._pace_start + self._pts / SAMPLE_RATE - now
+            if wait > 0:
+                await asyncio.sleep(wait)
+            elif wait < -0.2:
+                self._pace_start = now - self._pts / SAMPLE_RATE
+
+        # Do not wait for model output. A full frame is immediately available
+        # from the queue; otherwise the track emits silence at the fixed 20ms
+        # cadence so the RTP stream remains continuous.
         self._drain_queue()
 
         if self.readyState == "ended":
@@ -82,6 +96,19 @@ class AIResponseAudioTrack(MediaStreamTrack):
         frame.time_base = Fraction(1, SAMPLE_RATE)
         frame.planes[0].update(data)
         self._pts += SAMPLES_PER_FRAME
+
+        self.frames_emitted += 1
+        self.session.audio_frames_emitted = self.frames_emitted
+        t = time.monotonic()
+        dt = t - self._tx_log_t
+        if dt >= 10.0:
+            rate = (self.frames_emitted - self._tx_log_frames) / dt
+            log.info(
+                f"[WEBRTC] Downlink tx: {rate:.0f} frames/s "
+                f"(voice={self.session.audio_frames_sent} total={self.frames_emitted})"
+            )
+            self._tx_log_t = t
+            self._tx_log_frames = self.frames_emitted
 
         if not self.playing and self.session.ai_playing:
             self.session.ai_playing = False

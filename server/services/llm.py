@@ -1,7 +1,8 @@
+import asyncio
 import time
 from typing import AsyncIterator, Dict, List, Optional
 
-from groq import AsyncGroq
+from groq import Groq
 
 from config import SYSTEM_PROMPT, settings
 from services.knowledge import knowledge
@@ -30,18 +31,15 @@ class GroqLLM:
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None) -> None:
         self.api_key = api_key or settings.groq_api_key
         self.model = model or settings.groq_model
-        self._client: Optional[AsyncGroq] = None
+        self._client: Optional[Groq] = None
 
     async def start(self) -> None:
         if not self.api_key:
             raise RuntimeError("GROQ_API_KEY is not set")
-        self._client = AsyncGroq(api_key=self.api_key)
+        self._client = Groq(api_key=self.api_key)
         log.info(f"[LLM] Connected model={self.model}")
 
-    async def stream(
-        self, history: List[Dict[str, str]]
-    ) -> AsyncIterator[str]:
-        """Yield response text chunks. history: session conversation messages."""
+    def _create_stream(self, history: List[Dict[str, str]]):
         if self._client is None:
             raise RuntimeError("LLM not started")
         messages = [{"role": "system", "content": build_system_prompt()}, *history]
@@ -54,8 +52,18 @@ class GroqLLM:
         )
         if "gpt-oss" in self.model:
             params["reasoning_effort"] = "low"
-        stream = await self._client.chat.completions.create(**params)
-        async for chunk in stream:
+        return self._client.chat.completions.create(**params)
+
+    async def stream(
+        self, history: List[Dict[str, str]]
+    ) -> AsyncIterator[str]:
+        """Yield response text chunks without blocking the event loop."""
+        stream = await asyncio.to_thread(self._create_stream, history)
+        while True:
+            try:
+                chunk = await asyncio.to_thread(next, stream)
+            except StopIteration:
+                return
             if not chunk.choices:
                 continue
             delta = chunk.choices[0].delta.content

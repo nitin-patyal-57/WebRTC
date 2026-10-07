@@ -4,9 +4,19 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from api import dashboard, health, webrtc, ws
-from config import settings
-from utils.logger import get_logger
+from aioice_compat import install_aioice_consent_grace, install_aioice_retry_guard
+
+install_aioice_retry_guard()
+
+# Import config before anything that logs so .env (dotenv) is loaded prior
+# to the first configure_logging() call.
+from config import settings  # noqa: E402
+
+# Reads ICE_CONSENT_FAILURES from .env - must run after the config import.
+install_aioice_consent_grace()
+
+from api import dashboard, health, webrtc, ws  # noqa: E402
+from utils.logger import get_logger, ice_debug_enabled  # noqa: E402
 
 log = get_logger("APP")
 
@@ -35,6 +45,11 @@ async def on_startup() -> None:
     log.info("[APP] AI Voice Support starting")
     log.info(f"[APP] STUN: {settings.stun_urls}")
     log.info(f"[APP] TURN configured: {bool(settings.turn_url)}")
+    if ice_debug_enabled():
+        log.info(
+            "[APP] ICE debug ON: tracing STUN in/out and consent "
+            "(look for 'Consent to send expired' or 400 replies before a drop)"
+        )
     log.info(f"[APP] Groq key set: {bool(settings.groq_api_key)}")
 
 

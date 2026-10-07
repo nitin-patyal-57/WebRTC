@@ -31,14 +31,14 @@ Write-Host "  https://127.0.0.1:$Port (this PC)"
 Write-Host "Dashboard (this PC): http://127.0.0.1:9000/dashboard or https://$lanIp`:$Port/dashboard"
 Write-Host ""
 Write-Host "Enter the URL above in the Android app, then tap Load."
-$fw = netsh advfirewall firewall show rule name="AI Voice Server 8443" 2>&1 | Out-String
-if ($fw -notmatch "AI Voice Server 8443") {
-    Write-Host "Adding Windows Firewall rule for TCP $Port (accept UAC if prompted)..."
+$fw = netsh advfirewall firewall show rule name="AI Voice Server ICE UDP (python.exe)" 2>&1 | Out-String
+if ($fw -notmatch "AI Voice Server ICE UDP") {
+    Write-Host "Adding Windows Firewall rules for TCP $Port + inbound UDP/ICE (accept UAC if prompted)..."
     try {
         Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile","-ExecutionPolicy","Bypass","-File","$PSScriptRoot\scripts\add_firewall_rule.ps1" -Verb RunAs -Wait
     } catch {
-        Write-Host "Could not add firewall rule automatically."
-        Write-Host "Run as Administrator:  netsh advfirewall firewall add rule name=`"AI Voice Server 8443`" dir=in action=allow protocol=TCP localport=$Port"
+        Write-Host "Could not add firewall rules automatically."
+        Write-Host "Run as Administrator:  powershell -ExecutionPolicy Bypass -File .\scripts\add_firewall_rule.ps1"
     }
 }
 Write-Host ""

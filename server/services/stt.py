@@ -42,7 +42,7 @@ class GroqSTT:
         self.model = model or settings.groq_stt_model
         self.language = settings.stt_language
         self.queue: asyncio.Queue = asyncio.Queue()
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: Optional[httpx.Client] = None
         self._running = False
         self._buffer = bytearray()
         self._lock = asyncio.Lock()
@@ -57,7 +57,7 @@ class GroqSTT:
     async def start(self) -> None:
         if not self.api_key:
             raise RuntimeError("GROQ_API_KEY is not set")
-        self._client = httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=5.0))
+        self._client = httpx.Client(timeout=httpx.Timeout(20.0, connect=5.0))
         self._running = True
         log.info(f"[STT] Connected model={self.model} (Groq Whisper, VAD-segmented)")
         await self._emit({"type": "stt_connected"})
@@ -142,7 +142,7 @@ class GroqSTT:
             return
         await self._emit({"type": "final_transcript", "text": text})
 
-    async def _transcribe(self, pcm: bytes) -> str:
+    def _transcribe_sync(self, pcm: bytes) -> str:
         if self._client is None:
             raise RuntimeError("STT client not started")
         wav = pcm_to_wav(pcm)
@@ -153,7 +153,7 @@ class GroqSTT:
         }
         if self.language:
             data["language"] = self.language
-        response = await self._client.post(
+        response = self._client.post(
             GROQ_TRANSCRIBE_URL,
             headers={"Authorization": f"Bearer {self.api_key}"},
             data=data,
@@ -161,6 +161,9 @@ class GroqSTT:
         )
         response.raise_for_status()
         return (response.json().get("text") or "").strip()
+
+    async def _transcribe(self, pcm: bytes) -> str:
+        return await asyncio.to_thread(self._transcribe_sync, pcm)
 
     async def send_audio_blocking_flush(self) -> None:
         """No-op kept for interface symmetry with streaming STT providers."""
@@ -176,6 +179,6 @@ class GroqSTT:
             except (asyncio.CancelledError, Exception):
                 pass
         if self._client is not None:
-            await self._client.aclose()
+            self._client.close()
             self._client = None
         log.info("[STT] Closed")

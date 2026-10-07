@@ -14,7 +14,7 @@ log = get_logger("WS")
 router = APIRouter()
 
 SAMPLE_RATES = {8000, 11025, 16000, 22050, 24000, 32000, 44100, 48000}
-FRAME_BYTES = 1920  # 20ms @ 48kHz s16 mono — matches AIResponseAudioTrack
+FRAME_BYTES = 320  # 20ms @ 8kHz s16 mono — matches AIResponseAudioTrack
 CHUNK_LOG_EVERY = 50
 
 
@@ -53,14 +53,14 @@ async def _pump_tts_to_ws(session) -> None:
 async def voice_websocket(
     websocket: WebSocket,
     device_id: str = Query(default="WS_DEVICE"),
-    sample_rate: int = Query(default=48000),
+    sample_rate: int = Query(default=8000),
 ) -> None:
     from pipeline.voice_pipeline import VoicePipeline
     from webrtc.session import session_manager
 
     await websocket.accept()
     if sample_rate not in SAMPLE_RATES:
-        sample_rate = 48000
+        sample_rate = 8000
 
     session = session_manager.create(device_id)
     session.websocket = websocket

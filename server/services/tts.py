@@ -15,11 +15,11 @@ from utils.logger import get_logger
 log = get_logger("TTS")
 
 GROQ_SPEECH_URL = "https://api.groq.com/openai/v1/audio/speech"
-TARGET_RATE = 48000
+TARGET_RATE = 8000
 
 
-def wav_to_pcm_48k(wav_bytes: bytes) -> bytes:
-    """Parse WAV and normalize to 48kHz mono 16-bit PCM for WebRTC."""
+def wav_to_pcm_8k(wav_bytes: bytes) -> bytes:
+    """Parse WAV and normalize to 8kHz mono 16-bit PCM for WebRTC."""
     with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
         channels = wf.getnchannels()
         width = wf.getsampwidth()
@@ -66,7 +66,7 @@ def wav_to_pcm_48k(wav_bytes: bytes) -> bytes:
 
 
 class GroqTTS:
-    """Sentence-level TTS over Groq Orpheus. Returns 48kHz mono s16 PCM."""
+    """Sentence-level TTS over Groq Orpheus. Returns 8kHz mono s16 PCM."""
 
     def __init__(
         self,
@@ -77,22 +77,18 @@ class GroqTTS:
         self.api_key = api_key or settings.groq_api_key
         self.model = model or settings.groq_tts_model
         self.voice = voice or settings.groq_tts_voice
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: Optional[httpx.Client] = None
 
     async def start(self) -> None:
         if not self.api_key:
             raise RuntimeError("GROQ_API_KEY is not set")
-        self._client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0))
+        self._client = httpx.Client(timeout=httpx.Timeout(30.0, connect=5.0))
         log.info(f"[TTS] Connected model={self.model} voice={self.voice}")
 
-    async def synthesize(self, text: str) -> bytes:
-        """Convert one sentence to 48kHz mono s16 PCM bytes."""
+    def _synthesize_sync(self, text: str) -> bytes:
         if self._client is None:
             raise RuntimeError("TTS client not started")
-        text = text.strip()
-        if not text:
-            return b""
-        response = await self._client.post(
+        response = self._client.post(
             GROQ_SPEECH_URL,
             headers={"Authorization": f"Bearer {self.api_key}"},
             json={
@@ -105,7 +101,14 @@ class GroqTTS:
         if response.status_code >= 400:
             detail = response.text[:400]
             raise RuntimeError(f"TTS HTTP {response.status_code}: {detail}")
-        pcm = wav_to_pcm_48k(response.content)
+        return wav_to_pcm_8k(response.content)
+
+    async def synthesize(self, text: str) -> bytes:
+        """Convert one sentence to 8kHz mono s16 PCM bytes."""
+        text = text.strip()
+        if not text:
+            return b""
+        pcm = await asyncio.to_thread(self._synthesize_sync, text)
         log.info(
             f"[TTS] Synthesized {len(text)} chars -> {len(pcm)} bytes "
             f"({len(pcm)/2/TARGET_RATE:.2f}s)"
@@ -114,7 +117,7 @@ class GroqTTS:
 
     async def close(self) -> None:
         if self._client is not None:
-            await self._client.aclose()
+            self._client.close()
             self._client = None
         log.info("[TTS] Closed")
 
@@ -156,7 +159,7 @@ class SapiTTS:
             wav_bytes = await asyncio.to_thread(_speak)
         except Exception as exc:
             raise RuntimeError(f"SAPI TTS failed: {exc}") from exc
-        pcm = wav_to_pcm_48k(wav_bytes)
+        pcm = wav_to_pcm_8k(wav_bytes)
         log.info(
             f"[TTS] Synthesized {len(text)} chars -> {len(pcm)} bytes "
             f"({len(pcm)/2/TARGET_RATE:.2f}s)"

@@ -14,6 +14,19 @@ router = APIRouter(prefix="/webrtc", tags=["webrtc"])
 sessions_router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 
+def _candidate_summary(sdp: str) -> str:
+    counts: dict = {}
+    for line in sdp.splitlines():
+        if not line.startswith("a=candidate:"):
+            continue
+        parts = line.split()
+        kind = parts[7] if len(parts) > 7 and parts[6] == "typ" else "unknown"
+        counts[kind] = counts.get(kind, 0) + 1
+    if not counts:
+        return "none"
+    return ", ".join(f"{kind}={n}" for kind, n in sorted(counts.items()))
+
+
 class OfferRequest(BaseModel):
     device_id: str = Field(min_length=1, max_length=128)
     sdp: str = Field(min_length=1)
@@ -39,6 +52,10 @@ async def create_offer(request: OfferRequest) -> OfferResponse:
         await pc.setLocalDescription(answer)
         local = pc.localDescription
         session.state = "connected"
+        log.info(
+            f"[WEBRTC] Answer candidates [{session.device_id}]: "
+            f"{_candidate_summary(local.sdp)}"
+        )
         log.info(f"[WEBRTC] Device connected: {session.device_id} session={session.session_id}")
         return OfferResponse(session_id=session.session_id, sdp=local.sdp, type=local.type)
     except Exception as exc:

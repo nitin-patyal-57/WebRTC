@@ -1,10 +1,14 @@
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import List
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# Resolve the environment file relative to this module instead of the
+# process working directory. This keeps TURN/STUN settings available when
+# the server is started from the repository root.
+load_dotenv(Path(__file__).with_name(".env"))
 
 
 def _split_csv(value: str) -> List[str]:
