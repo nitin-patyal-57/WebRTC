@@ -19,6 +19,8 @@ DYNAMIC_TOKENS = {
     "time", "date", "today", "yesterday", "tomorrow", "day", "month", "year",
     "news", "summary", "summarize", "latest", "recent", "current", "now",
     "balance", "transaction", "txn", "last", "recently",
+    "transactions", "txns", "payments", "sales", "collection", "earning", "earnings",
+    "gold", "price", "rate", "humidity", "degrees",
 }
 
 

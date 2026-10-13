@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -5,7 +6,10 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from aioice_compat import install_aioice_consent_grace, install_aioice_retry_guard
+from utils.console import disable_quick_edit
 
+# A click in the console window would otherwise freeze the server until a key is pressed.
+disable_quick_edit()
 install_aioice_retry_guard()
 
 # Import config before anything that logs so .env (dotenv) is loaded prior
@@ -51,6 +55,9 @@ async def on_startup() -> None:
             "(look for 'Consent to send expired' or 400 replies before a drop)"
         )
     log.info(f"[APP] Groq key set: {bool(settings.groq_api_key)}")
+    from utils.clock import check_clock
+
+    asyncio.create_task(check_clock(settings.ntp_check_server))
 
 
 @app.on_event("shutdown")

@@ -41,7 +41,22 @@ class Settings:
     vad_silence_ms: int = field(default_factory=lambda: int(os.getenv("VAD_SILENCE_MS", "700")))
     vad_min_speech_ms: int = field(default_factory=lambda: int(os.getenv("VAD_MIN_SPEECH_MS", "300")))
     vad_threshold: float = field(default_factory=lambda: float(os.getenv("VAD_THRESHOLD", "0.025")))
-    vad_stall_ms: int = field(default_factory=lambda: int(os.getenv("VAD_STALL_MS", "3000")))
+    # End the utterance when no inbound audio arrives for this long mid-speech
+    # (the Soundbox stops sending RTP after its silence tail).
+    vad_no_audio_ms: int = field(default_factory=lambda: int(os.getenv("VAD_NO_AUDIO_MS", "400")))
+
+    # Streaming TTS: push a chunk's audio once this much is synthesized.
+    tts_prebuffer_ms: int = field(default_factory=lambda: int(os.getenv("TTS_PREBUFFER_MS", "200")))
+    # Frames below this RMS (0-1) count as TTS silence for trimming.
+    tts_silence_threshold: float = field(default_factory=lambda: float(os.getenv("TTS_SILENCE_THRESHOLD", "0.005")))
+    # Longest silence kept between two chunks of one reply; a reply's trailing
+    # silence is always dropped before the end marker.
+    tts_max_pause_ms: int = field(default_factory=lambda: int(os.getenv("TTS_MAX_PAUSE_MS", "200")))
+    # TTS requests in flight per reply (next chunk synthesizes while one plays).
+    tts_parallel: int = field(default_factory=lambda: int(os.getenv("TTS_PARALLEL", "2")))
+
+    # SNTP server used to check the host clock at startup (blank = skip).
+    ntp_check_server: str = field(default_factory=lambda: os.getenv("NTP_CHECK_SERVER", "pool.ntp.org"))
 
     barge_in: bool = field(default_factory=lambda: os.getenv("BARGE_IN", "false").lower() in ("1", "true", "yes", "on"))
     stt_partials: bool = field(default_factory=lambda: os.getenv("STT_PARTIALS", "false").lower() in ("1", "true", "yes", "on"))
@@ -57,6 +72,14 @@ class Settings:
         default_factory=lambda: os.getenv("ANSWER_CACHE_ENABLED", "true").lower() in ("1", "true", "yes", "on")
     )
     answer_cache_max: int = field(default_factory=lambda: int(os.getenv("ANSWER_CACHE_MAX", "500")))
+
+    live_answers_enabled: bool = field(
+        default_factory=lambda: os.getenv("LIVE_ANSWERS_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+    )
+    weather_city: str = field(default_factory=lambda: os.getenv("WEATHER_CITY", "Mumbai"))
+    weather_country: str = field(default_factory=lambda: os.getenv("WEATHER_COUNTRY", "IN"))
+    # Local time zone for transaction dates/times (minutes east of UTC; 330 = IST).
+    tz_offset_minutes: int = field(default_factory=lambda: int(os.getenv("TZ_OFFSET_MINUTES", "330")))
 
 
 settings = Settings()

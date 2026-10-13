@@ -9,8 +9,41 @@ from dashboard_store import dashboard
 from utils.logger import get_logger
 
 log = get_logger("SESSION")
+# Per-turn latency summary shares the PIPELINE prefix with the stage logs.
+pipeline_log = get_logger("PIPELINE")
 
 MAX_HISTORY_MESSAGES_DEFAULT = 10
+
+
+def _fmt_ts(t_ms: float) -> str:
+    return time.strftime("%H:%M:%S", time.localtime(t_ms / 1000.0)) + f".{int(t_ms % 1000):03d}"
+AUDIO_TRAILER = b"\x00\xff"  # appended to every binary audio message sent to the client
+
+
+class _Sentinel:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __repr__(self) -> str:
+        return self.name
+
+
+# tts_audio_queue item: the current reply is complete (send the end marker).
+REPLY_END = _Sentinel("REPLY_END")
+# audio_queue item: the device signalled end of speech (RTP payload 00 FE).
+END_OF_SPEECH = _Sentinel("END_OF_SPEECH")
+
+# Turn stages in order, as printed in the per-turn latency summary.
+TURN_STAGES = (
+    ("speech_start", "speech_start"),
+    ("speech_end", "speech_end"),
+    ("stt_final", "stt_done"),
+    ("llm_first_token", "llm_first_token"),
+    ("tts_first_audio", "tts_first_audio"),
+    ("audio_sent", "first_reply_rtp_sent"),
+    ("last_voice_rtp_sent", "last_voice_rtp_sent"),
+    ("end_marker_sent", "end_marker_sent"),
+)
 
 
 @dataclass
@@ -26,6 +59,8 @@ class Session:
     audio_track: Any = None
     ai_track: Any = None
     audio_sample_rate: int = 48000
+    # Negotiated downlink codec mimeType (lowercase), e.g. "audio/pcmu".
+    downlink_codec: Optional[str] = None
 
     # Pipeline services (per-session isolation, wired in later phases)
     stt: Any = None
@@ -47,6 +82,14 @@ class Session:
     audio_frames_emitted: int = 0
     ai_playing: bool = False
     state: str = "new"
+
+    # Response send tracking (first/last chunk of the current AI reply)
+    send_first_ms: Optional[float] = None
+    send_last_ms: Optional[float] = None
+    send_chunks: int = 0
+    # Why the current utterance ended: silence / no-audio / marker.
+    speech_end_reason: Optional[str] = None
+    _turn_logged: bool = False
 
     def touch(self) -> None:
         self.last_activity = time.time()
@@ -84,6 +127,7 @@ class Session:
         ws = self.websocket
         if ws is None or not data:
             return
+        data = data + AUDIO_TRAILER
         try:
             self._schedule_ws_bytes(data)
             dashboard.audio_to_apk(self.session_id, len(data))
@@ -137,10 +181,79 @@ class Session:
         if "audio_sent" in lat:
             dashboard.turn_finished(self.session_id, metrics)
 
-    def mark_stage(self, name: str, t_ms: Optional[float] = None) -> None:
+    def finish_turn(self) -> None:
+        """Log one latency summary line for the turn (at most once per turn)."""
+        lat = self.latency
+        if self._turn_logged or "speech_end" not in lat:
+            return
+        self._turn_logged = True
+
+        stamps = []
+        for key, label in TURN_STAGES:
+            value = _fmt_ts(lat[key]) if key in lat else "n/a"
+            if key == "speech_end":
+                value += f"({self.speech_end_reason or 'silence'})"
+            stamps.append(f"{label}={value}")
+
+        def d(a: str, b: str) -> str:
+            if a in lat and b in lat:
+                return f"{lat[b] - lat[a]:.0f}ms"
+            return "n/a"
+
+        pipeline_log.info(
+            f"[LATENCY] session={self.session_id[:8]} " + " ".join(stamps) + " | "
+            f"speech={d('speech_start', 'speech_end')} "
+            f"endpoint={d('last_voiced', 'speech_end')} "
+            f"stt={d('speech_end', 'stt_final')} "
+            f"llm_first_token={d('stt_final', 'llm_first_token')} "
+            f"tts_first_audio={d('llm_first_token', 'tts_first_audio')} "
+            f"to_rtp={d('tts_first_audio', 'audio_sent')} "
+            f"reply_audio={d('audio_sent', 'last_voice_rtp_sent')} "
+            f"marker={d('last_voice_rtp_sent', 'end_marker_sent')} | "
+            f"speech_end_to_first_rtp={d('speech_end', 'audio_sent')}"
+        )
+
+    def begin_turn(self) -> None:
+        self.latency = {}
+        self.speech_end_reason = None
+        self._turn_logged = False
+
+    def on_end_of_speech(self) -> None:
+        """RTP receiver hook: the device sent the 00 FE end-of-speech packet."""
+        if self.pipeline is not None:
+            self.audio_queue.put_nowait(END_OF_SPEECH)
+
+    def note_audio_chunk_sent(self, nbytes: int) -> None:
+        """Called by the transport for every real (non-silence) audio chunk sent."""
+        now = time.time() * 1000.0
+        if self.send_first_ms is None:
+            self.send_first_ms = now
+            self.send_chunks = 0
+            log.info(f"[SEND] First response chunk sent at {_fmt_ts(now)} ({nbytes} bytes)")
+        self.send_last_ms = now
+        self.send_chunks += 1
+
+    def end_response_send(self, reason: str) -> None:
+        """Log the last chunk sent for the current reply and reset tracking."""
+        first, last = self.send_first_ms, self.send_last_ms
+        if first is None or last is None:
+            return
+        speech_end = self.latency.get("speech_end")
+        since_speech = f"{last - speech_end:.0f}ms" if speech_end is not None else "n/a"
+        log.info(
+            f"[SEND] Last response chunk sent at {_fmt_ts(last)} ({reason}) "
+            f"first={_fmt_ts(first)} send_duration={last - first:.0f}ms "
+            f"chunks={self.send_chunks} speech_end_to_last={since_speech}"
+        )
+        self.send_first_ms = None
+        self.send_last_ms = None
+        self.send_chunks = 0
+
+    def mark_stage(self, name: str, t_ms: Optional[float] = None, record_dashboard: bool = True) -> None:
         t = t_ms if t_ms is not None else time.time() * 1000.0
         self.latency[name] = t
-        dashboard.turn_stage(self.session_id, name, t)
+        if record_dashboard:
+            dashboard.turn_stage(self.session_id, name, t)
 
     def add_history(self, role: str, content: str, max_messages: int = MAX_HISTORY_MESSAGES_DEFAULT) -> None:
         self.conversation_history.append({"role": role, "content": content})

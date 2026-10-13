@@ -4,5 +4,6 @@ aiortc==1.15.0
 aioice==0.10.2
 av==17.1.0
 groq==1.7.0
+httpx==0.28.1
 pydantic==2.13.5
 python-dotenv==1.2.3

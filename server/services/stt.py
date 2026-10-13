@@ -134,10 +134,13 @@ class GroqSTT:
         asyncio.create_task(self._run_final(pcm))
 
     async def _run_final(self, pcm: bytes) -> None:
+        t0 = time.perf_counter()
+        log.info(f"[STT] API request sent ({len(pcm)} bytes, {len(pcm)/BYTES_PER_SECOND:.2f}s audio)")
         try:
             text = await self._transcribe(pcm)
+            log.info(f"[STT] API response in {(time.perf_counter() - t0) * 1000:.0f}ms")
         except Exception as exc:
-            log.error(f"[STT] Transcription failed: {exc!r}")
+            log.error(f"[STT] Transcription failed after {(time.perf_counter() - t0) * 1000:.0f}ms: {exc!r}")
             await self._emit({"type": "error", "message": f"STT failed: {exc}"})
             return
         await self._emit({"type": "final_transcript", "text": text})

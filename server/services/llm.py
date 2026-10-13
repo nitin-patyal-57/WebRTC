@@ -6,23 +6,29 @@ from groq import Groq
 
 from config import SYSTEM_PROMPT, settings
 from services.knowledge import knowledge
+from services.transactions import transactions
 from utils.logger import get_logger
 
 log = get_logger("LLM")
 
 
 def build_system_prompt() -> str:
-    """System prompt plus curated Soundbox device facts (fallback answers)."""
+    """System prompt plus curated Soundbox device facts and recent payments."""
+    prompt = SYSTEM_PROMPT
     facts = knowledge.facts()
-    if not facts:
-        return SYSTEM_PROMPT
-    return (
-        f"{SYSTEM_PROMPT}\n"
-        "Device facts:\n"
-        f"{facts}\n"
-        "When a question is about the Soundbox, its LED, SIM or transactions, "
-        "answer using these facts with the same short wording."
+    if facts:
+        prompt += (
+            "\nDevice facts:\n"
+            f"{facts}\n"
+            "When a question is about the Soundbox, its LED, SIM or transactions, "
+            "answer using these facts with the same short wording."
+        )
+    prompt += (
+        f"\n{transactions.prompt_context()}\n"
+        "Answer questions about payments only from this list; say amounts in rupees. "
+        "Never invent payments, weather or prices."
     )
+    return prompt
 
 
 class GroqLLM:
@@ -59,10 +65,12 @@ class GroqLLM:
     ) -> AsyncIterator[str]:
         """Yield response text chunks without blocking the event loop."""
         stream = await asyncio.to_thread(self._create_stream, history)
+        # StopIteration can't cross a Future (asyncio turns it into
+        # RuntimeError), so signal end-of-stream with a sentinel instead.
+        done = object()
         while True:
-            try:
-                chunk = await asyncio.to_thread(next, stream)
-            except StopIteration:
+            chunk = await asyncio.to_thread(next, stream, done)
+            if chunk is done:
                 return
             if not chunk.choices:
                 continue

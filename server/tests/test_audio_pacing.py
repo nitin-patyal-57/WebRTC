@@ -13,7 +13,8 @@ def _fake_session() -> types.SimpleNamespace:
         audio_frames_sent=0,
         latency={},
         send_audio_bytes=lambda data: None,
-        mark_stage=lambda name: None,
+        note_audio_chunk_sent=lambda nbytes: None,
+        mark_stage=lambda name, **kwargs: None,
         emit_latency=lambda: None,
     )
 

@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from utils.logger import get_logger
-from webrtc.peer import create_peer_connection
+from webrtc.peer import create_peer_connection, note_negotiated_codec
 from webrtc.session import session_manager
 
 log = get_logger("WEBRTC")
@@ -50,6 +50,7 @@ async def create_offer(request: OfferRequest) -> OfferResponse:
         await pc.setRemoteDescription(RTCSessionDescription(sdp=request.sdp, type=request.type))
         answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
+        note_negotiated_codec(pc, session)
         local = pc.localDescription
         session.state = "connected"
         log.info(

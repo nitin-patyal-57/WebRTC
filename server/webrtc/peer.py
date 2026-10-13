@@ -8,7 +8,10 @@ from aiortc.mediastreams import MediaStreamError
 from config import settings
 from utils.logger import get_logger
 from webrtc.audio_track import AIResponseAudioTrack
+from webrtc.rtp_markers import install_end_of_speech_hook
 from webrtc.session import Session, session_manager
+
+install_end_of_speech_hook()
 
 log = get_logger("WEBRTC")
 
@@ -137,6 +140,10 @@ def create_peer_connection(session: Session) -> RTCPeerConnection:
         session.touch()
         log.info(f"[WEBRTC] Track added: kind={track.kind} id={track.id}")
         if track.kind == "audio":
+            for transceiver in pc.getTransceivers():
+                if transceiver.receiver.track is track:
+                    # Device end-of-speech packet (00 FE), see rtp_markers.
+                    transceiver.receiver._on_end_of_speech = session.on_end_of_speech
             asyncio.create_task(_consume_audio_track(track, session))
 
         @track.on("ended")
@@ -148,3 +155,12 @@ def create_peer_connection(session: Session) -> RTCPeerConnection:
         log.info("[WEBRTC] Track ended")
 
     return pc
+
+
+def note_negotiated_codec(pc: RTCPeerConnection, session: Session) -> None:
+    """Record the downlink codec (the sender encodes with the first one)."""
+    for transceiver in pc.getTransceivers():
+        if transceiver.sender.track is session.ai_track and transceiver._codecs:
+            session.downlink_codec = transceiver._codecs[0].mimeType.lower()
+            log.info(f"[WEBRTC] Downlink codec [{session.device_id}]: {session.downlink_codec}")
+            return

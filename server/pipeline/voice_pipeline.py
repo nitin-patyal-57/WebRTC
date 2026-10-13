@@ -1,29 +1,45 @@
 import asyncio
-import re
 import time
+from dataclasses import dataclass, field
 from typing import Optional
 
 from audio.processor import AudioProcessor
 from audio.vad import EnergyVAD, VADEvent
 from config import settings
+from pipeline.reply_audio import FRAME_BYTES, FRAME_MS, ReplyAudioShaper, split_tts_chunk
 from services.answer_cache import answer_cache
 from services.fixed_answers import fixed_answers
 from services.knowledge import KBMatch, knowledge
+from services.live_answers import live_answers
 from services.llm import GroqLLM
 from services.stt import GroqSTT
 from services.tts import create_tts
 from utils.logger import get_logger
-from webrtc.session import Session
+from webrtc.session import END_OF_SPEECH, REPLY_END, Session
 
 log = get_logger("PIPELINE")
 
-SENTENCE_RE = re.compile(r'[.!?]["\')\]]?(\s+|$)')
-FORCE_SPLIT_CHARS = 80
-MIN_SPLIT_CHARS = 20
+NO_AUDIO_POLL_S = 0.05
 
 
 def _now_ms() -> float:
     return time.time() * 1000.0
+
+
+@dataclass
+class _ChunkJob:
+    """One TTS chunk of a reply; ``audio`` yields PCM pieces then None."""
+
+    text: str
+    generation: int
+    index: int
+    audio: asyncio.Queue = field(default_factory=asyncio.Queue)
+    task: Optional[asyncio.Task] = None
+
+
+@dataclass
+class _ReplyEndJob:
+    generation: int
 
 
 class VoicePipeline:
@@ -47,12 +63,21 @@ class VoicePipeline:
         self._tts_buffer = ""
         self._llm_active = False
         self._last_audio_time = time.monotonic()
+        # Streaming TTS: chunk jobs in reply order, consumed by _reply_writer.
+        self._chunk_jobs: asyncio.Queue = asyncio.Queue()
+        self._active_jobs: list[_ChunkJob] = []
+        self._chunk_index = 0
+        self._tts_slots = asyncio.Semaphore(max(1, settings.tts_parallel))
+        self._shaper: Optional[ReplyAudioShaper] = None
+        self._writer_busy = False
 
     def _ai_in_progress(self) -> bool:
         session = self.session
         track = session.ai_track
         return bool(
             self._llm_active
+            or self._writer_busy
+            or not self._chunk_jobs.empty()
             or not session.llm_text_queue.empty()
             or not session.tts_audio_queue.empty()
             or (track is not None and (track.has_pending or session.ai_playing))
@@ -90,7 +115,8 @@ class VoicePipeline:
             asyncio.create_task(self._stt_event_loop(), name=f"stt-evt:{session.session_id[:8]}"),
             asyncio.create_task(self._llm_loop(), name=f"llm:{session.session_id[:8]}"),
             asyncio.create_task(self._tts_loop(), name=f"tts:{session.session_id[:8]}"),
-            asyncio.create_task(self._stall_watchdog(), name=f"stall:{session.session_id[:8]}"),
+            asyncio.create_task(self._reply_writer(), name=f"reply:{session.session_id[:8]}"),
+            asyncio.create_task(self._no_audio_watchdog(), name=f"noaudio:{session.session_id[:8]}"),
         ]
         log.info(f"[PIPELINE] Started for session {session.session_id}")
 
@@ -99,6 +125,7 @@ class VoicePipeline:
             return
         self._stopping = True
         self._generation += 1
+        self._cancel_chunk_jobs()
         for task in self._tasks:
             task.cancel()
         for task in self._tasks:
@@ -123,6 +150,7 @@ class VoicePipeline:
         """Barge-in: user started speaking while AI audio was pending."""
         session = self.session
         self._generation += 1
+        session.end_response_send("interrupted")
         cleared = 0
         for queue in (session.tts_audio_queue, session.llm_text_queue):
             while not queue.empty():
@@ -132,10 +160,12 @@ class VoicePipeline:
                 except asyncio.QueueEmpty:
                     break
         self._tts_buffer = ""
-        self.vad.reset()
+        cleared += self._cancel_chunk_jobs()
+        self._shaper = None
         session.ai_playing = False
         if session.ai_track is not None:
-            session.ai_track.clear()
+            # Stop the reply mid-stream; the track sends the 00 FF marker.
+            session.ai_track.cancel_reply()
         session.send_event({"type": "interrupted"})
         log.info(f"[PIPELINE] Interrupted, cleared {cleared} pending items")
 
@@ -154,48 +184,55 @@ class VoicePipeline:
         session = self.session
         while True:
             frame = await session.audio_queue.get()
+            if frame is END_OF_SPEECH:
+                await self._force_endpoint("marker", "end-of-speech packet 00 FE")
+                continue
             self._last_audio_time = time.monotonic()
             for pcm in self.processor.process(frame):
                 events = self.vad.process(pcm)
                 for event in events:
                     await self._handle_vad(event)
+                if self.vad.is_speech_active and self.vad.last_rms >= self.vad.threshold:
+                    session.mark_stage("last_voiced", record_dashboard=False)
                 if self.stt is not None:
                     await self.stt.send_audio(pcm)
                     if settings.stt_partials:
                         await self.stt.maybe_partial()
 
-    async def _stall_watchdog(self) -> None:
-        """Force the VAD endpoint when audio stops arriving mid-speech.
+    async def _force_endpoint(self, reason: str, detail: str) -> None:
+        """End the current utterance now and start STT (no silence wait)."""
+        if not self.vad.is_speech_active:
+            return
+        self.vad.reset()
+        log.info(f"[VAD] Speech stopped ({detail})")
+        await self._handle_vad(VADEvent.SPEECH_STOPPED, reason=reason)
 
-        EnergyVAD only advances its silence timer as PCM chunks arrive; if the
-        remote track stalls (screen off, RTP gap) SPEECH_STOPPED never fires and
-        the pipeline hangs. Feed synthetic silence to complete the utterance.
+    async def _no_audio_watchdog(self) -> None:
+        """End the utterance when inbound audio stops arriving mid-speech.
+
+        EnergyVAD only advances its silence timer as PCM arrives. The Soundbox
+        stops sending RTP after its silence tail (and other clients can stall:
+        screen off, RTP gap), so without this SPEECH_STOPPED would never fire.
         """
         try:
             while True:
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(NO_AUDIO_POLL_S)
                 if not self.vad.is_speech_active:
                     continue
-                stalled_ms = (time.monotonic() - self._last_audio_time) * 1000.0
-                if stalled_ms < settings.vad_stall_ms:
-                    continue
-                silence_ms = max(settings.vad_silence_ms + 100, 800)
-                pcm = b"\x00" * (16000 * 2 * silence_ms // 1000)
-                log.warning(
-                    f"[VAD] Audio stalled for {stalled_ms:.0f}ms during speech — forcing endpoint"
-                )
-                for event in self.vad.process(pcm):
-                    await self._handle_vad(event)
+                idle_ms = (time.monotonic() - self._last_audio_time) * 1000.0
+                if idle_ms >= settings.vad_no_audio_ms:
+                    await self._force_endpoint("no-audio", f"no audio for {idle_ms:.0f}ms")
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            log.error(f"[PIPELINE] Stall watchdog error: {exc!r}")
+            log.error(f"[PIPELINE] No-audio watchdog error: {exc!r}")
 
-    async def _handle_vad(self, event: VADEvent) -> None:
+    async def _handle_vad(self, event: VADEvent, reason: str = "silence") -> None:
         session = self.session
         if event == VADEvent.SPEECH_STARTED:
             self._user_speaking = True
-            session.latency = {}
+            session.finish_turn()  # previous turn, if its reply never completed
+            session.begin_turn()
             from dashboard_store import dashboard
 
             dashboard.turn_started(session.session_id)
@@ -209,8 +246,9 @@ class VoicePipeline:
         elif event == VADEvent.SPEECH_STOPPED:
             self._user_speaking = False
             session.mark_stage("speech_end")
+            session.speech_end_reason = reason
             session.send_event({"type": "vad", "event": "speech_stopped"})
-            log.info("[STT] Speech stopped, transcribing utterance")
+            log.info(f"[STT] Speech stopped ({reason}), transcribing utterance")
             if self.stt is not None:
                 await self.stt.finalize()
         elif event == VADEvent.SPEECH:
@@ -285,6 +323,20 @@ class VoicePipeline:
                             session.mark_stage("llm_end")
                             await session.llm_text_queue.put((generation, None))
                         continue
+
+                live = await live_answers.answer(user_text) if settings.live_answers_enabled else None
+                if live is not None:
+                    intent, answer = live
+                    log.info(f"[LIVE] {intent} answer for: {user_text}")
+                    try:
+                        await self._answer_fixed(session, answer, generation, dashboard, intent=intent)
+                    except Exception as exc:
+                        log.error(f"[LIVE] Failed to answer: {exc!r}")
+                    finally:
+                        self._llm_active = False
+                        session.mark_stage("llm_end")
+                        await session.llm_text_queue.put((generation, None))
+                    continue
 
                 remembered = answer_cache.match(user_text) if settings.answer_cache_enabled else None
                 if remembered is not None:
@@ -401,6 +453,7 @@ class VoicePipeline:
         log.info(f"[KB] Answer sent: {answer}")
 
     async def _tts_loop(self) -> None:
+        """Split the streamed answer into chunks and start TTS for each at once."""
         session = self.session
         try:
             while True:
@@ -415,51 +468,148 @@ class VoicePipeline:
                     chunk = self._tts_buffer.strip()
                     self._tts_buffer = ""
                     if chunk:
-                        await self._synthesize_to_queue(chunk, generation)
+                        self._start_chunk(chunk, generation)
+                    self._chunk_jobs.put_nowait(_ReplyEndJob(generation))
+                    self._chunk_index = 0
                     continue
 
                 self._tts_buffer += payload
                 while True:
-                    chunk, self._tts_buffer = self._extract_sentence(self._tts_buffer)
+                    chunk, self._tts_buffer = split_tts_chunk(self._tts_buffer)
                     if chunk is None:
                         break
-                    await self._synthesize_to_queue(chunk, generation)
+                    self._start_chunk(chunk, generation)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             log.error(f"[PIPELINE] TTS loop error: {exc!r}")
 
-    @staticmethod
-    def _extract_sentence(buffer: str) -> tuple:
-        match = SENTENCE_RE.search(buffer)
-        if match:
-            chunk = buffer[: match.end()].strip()
-            rest = buffer[match.end() :]
-            return (chunk or None), rest
-        if len(buffer) >= FORCE_SPLIT_CHARS:
-            cut = buffer.rfind(" ", 0, FORCE_SPLIT_CHARS)
-            if cut >= MIN_SPLIT_CHARS:
-                return buffer[:cut].strip(), buffer[cut:]
-        return None, buffer
+    # Kept for tests/phase4_tts.py.
+    _extract_sentence = staticmethod(split_tts_chunk)
 
-    async def _synthesize_to_queue(self, text: str, generation: int) -> None:
+    def _start_chunk(self, text: str, generation: int) -> None:
+        if self.tts is None:
+            return
+        job = _ChunkJob(text=text, generation=generation, index=self._chunk_index)
+        self._chunk_index += 1
+        job.task = asyncio.create_task(self._synthesize_chunk(job))
+        self._active_jobs.append(job)
+        self._chunk_jobs.put_nowait(job)
+
+    async def _synthesize_chunk(self, job: _ChunkJob) -> None:
+        """Stream one chunk's TTS audio into job.audio (runs ahead of playback)."""
         session = self.session
-        if self.tts is None or generation != self._generation:
-            return
-        if "tts_start" not in session.latency:
-            session.mark_stage("tts_start")
-            log.info(f"[TTS] Started for chunk: {text!r}")
         try:
-            pcm = await self.tts.synthesize(text)
+            async with self._tts_slots:
+                if job.generation != self._generation or self.tts is None:
+                    return
+                if "tts_start" not in session.latency:
+                    session.mark_stage("tts_start")
+                    log.info(f"[TTS] Started for chunk: {job.text!r}")
+                else:
+                    log.info(f"[TTS] Started chunk {job.index}: {job.text!r}")
+                async for pcm in self.tts.synthesize_stream(job.text):
+                    if job.generation != self._generation:
+                        return
+                    if "tts_first_audio" not in session.latency:
+                        session.mark_stage("tts_first_audio")
+                        log.info("[TTS] First audio received")
+                        session.emit_latency()
+                    job.audio.put_nowait(pcm)
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
-            log.error(f"[TTS] Synthesis failed: {exc!r}")
+            log.error(f"[TTS] Synthesis failed for chunk {job.index}: {exc!r}")
             session.send_event({"type": "error", "message": f"TTS failed: {exc}"})
-            return
-        if generation != self._generation or not pcm:
-            return
-        if "tts_first_audio" not in session.latency:
-            session.mark_stage("tts_first_audio")
-            log.info("[TTS] First audio received")
-            session.emit_latency()
-        await session.tts_audio_queue.put(pcm)
-        log.info(f"[TTS] Queued {len(pcm)} bytes ({len(pcm)/2/8000:.2f}s)")
+        finally:
+            job.audio.put_nowait(None)
+
+    def _cancel_chunk_jobs(self) -> int:
+        cleared = 0
+        while not self._chunk_jobs.empty():
+            try:
+                self._chunk_jobs.get_nowait()
+                cleared += 1
+            except asyncio.QueueEmpty:
+                break
+        for job in self._active_jobs:
+            if job.task is not None and not job.task.done():
+                job.task.cancel()
+            # A task cancelled before it started never runs its finally.
+            job.audio.put_nowait(None)
+        self._active_jobs.clear()
+        self._chunk_index = 0
+        return cleared
+
+    def _outbound_starved(self) -> bool:
+        """True when no reply audio is waiting to be sent."""
+        session = self.session
+        if not session.tts_audio_queue.empty():
+            return False
+        track = session.ai_track
+        return track is None or not track.has_pending
+
+    async def _reply_writer(self) -> None:
+        """Play chunk jobs strictly in order into the outbound audio queue."""
+        while True:
+            job = await self._chunk_jobs.get()
+            if job.generation != self._generation:
+                continue
+            self._writer_busy = True
+            try:
+                if isinstance(job, _ReplyEndJob):
+                    self._end_reply()
+                else:
+                    await self._play_chunk(job)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.error(f"[PIPELINE] Reply writer error (continuing): {exc!r}")
+            finally:
+                self._writer_busy = False
+
+    async def _play_chunk(self, job: _ChunkJob) -> None:
+        session = self.session
+        if self._shaper is None:
+            self._shaper = ReplyAudioShaper(
+                threshold=settings.tts_silence_threshold,
+                max_pause_ms=settings.tts_max_pause_ms,
+                is_starved=self._outbound_starved,
+            )
+        shaper = self._shaper
+        prebuffer_frames = max(1, settings.tts_prebuffer_ms // FRAME_MS)
+        held: list[bytes] = []
+        streaming = False
+        queued = 0
+        try:
+            while True:
+                pcm = await job.audio.get()
+                if job.generation != self._generation:
+                    return
+                frames = shaper.end_chunk() if pcm is None else shaper.feed(pcm)
+                held.extend(frames)
+                # Start this chunk once ~200 ms is ready, or at once if the
+                # previous chunk's audio is still playing (no gap either way).
+                if not streaming and held and (
+                    len(held) >= prebuffer_frames or pcm is None or not self._outbound_starved()
+                ):
+                    streaming = True
+                if streaming and held:
+                    session.tts_audio_queue.put_nowait(b"".join(held))
+                    queued += len(held)
+                    held = []
+                if pcm is None:
+                    break
+            log.info(f"[TTS] Chunk {job.index} queued {queued * FRAME_BYTES} bytes ({queued * FRAME_MS / 1000:.2f}s)")
+        finally:
+            if job in self._active_jobs:
+                self._active_jobs.remove(job)
+
+    def _end_reply(self) -> None:
+        """All chunks played: drop trailing silence, then the end marker."""
+        shaper, self._shaper = self._shaper, None
+        if shaper is not None:
+            shaper.finish()
+            if shaper.trimmed_frames:
+                log.info(f"[TTS] Trimmed {shaper.trimmed_frames * FRAME_MS}ms of TTS silence from reply")
+        self.session.tts_audio_queue.put_nowait(REPLY_END)

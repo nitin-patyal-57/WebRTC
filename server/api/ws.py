@@ -8,6 +8,7 @@ from av import AudioFrame
 from dashboard_store import dashboard
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from utils.logger import get_logger
+from webrtc.session import REPLY_END
 
 log = get_logger("WS")
 
@@ -21,27 +22,40 @@ CHUNK_LOG_EVERY = 50
 async def _pump_tts_to_ws(session) -> None:
     pending = bytearray()
     while session.websocket is not None:
+        reply_end = False
         try:
-            while True:
+            while not reply_end:
                 try:
                     chunk = session.tts_audio_queue.get_nowait()
                 except asyncio.QueueEmpty:
                     break
-                if chunk:
+                if chunk is REPLY_END:
+                    reply_end = True
+                elif chunk:
                     pending += chunk
         except Exception:
             pass
 
+        if reply_end and pending:
+            pending += bytes(-len(pending) % FRAME_BYTES)  # pad the last frame
         while len(pending) >= FRAME_BYTES:
             data = bytes(pending[:FRAME_BYTES])
             del pending[:FRAME_BYTES]
             session.audio_frames_sent += 1
             session.ai_playing = True
             session.send_audio_bytes(data)
+            session.note_audio_chunk_sent(len(data))
             lat = session.latency
             if "tts_first_audio" in lat and "audio_sent" not in lat:
                 session.mark_stage("audio_sent")
                 session.emit_latency()
+            session.mark_stage("last_voice_rtp_sent", record_dashboard=False)
+
+        if reply_end:
+            # The WebSocket transport has no in-band marker; every binary
+            # message already carries AUDIO_TRAILER. Just close out the turn.
+            session.end_response_send("complete")
+            session.finish_turn()
 
         if not session.tts_audio_queue.empty() or len(pending) >= FRAME_BYTES:
             continue

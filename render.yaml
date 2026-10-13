@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: ai-voice-support
+    runtime: python
+    plan: free
+    pythonVersion: 3.11
+    buildCommand: >-
+      cd server &&
+      python -m pip install --upgrade pip &&
+      python -m pip install -r requirements.txt
+    startCommand: >-
+      cd server &&
+      uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+      - key: TTS_PROVIDER
+        value: groq
+      - key: STUN_URLS
+        value: stun:stun.l.google.com:19302
+      - key: GROQ_API_KEY
+        sync: false
+        value: ""
