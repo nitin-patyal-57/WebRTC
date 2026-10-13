@@ -30,6 +30,9 @@ class EchoPipeline:
         self._stopping = False
         self._echoing = False  # audio echoed since the last REPLY_END
         self._echoed_bytes = 0
+        self._underruns = 0  # times the outbound ran dry mid-echo (rebuffered)
+        self._held = bytearray()  # jitter prebuffer, see _echo
+        self._prebuffer_bytes = max(1, settings.echo_prebuffer_ms * ECHO_RATE * 2 // 1000)
         self._last_audio_time = time.monotonic()
 
     async def start(self) -> None:
@@ -82,6 +85,7 @@ class EchoPipeline:
         if not self._echoing:
             self._echoing = True
             self._echoed_bytes = 0
+            self._underruns = 0
             session.finish_turn()
             session.begin_turn()
             now = time.time() * 1000.0
@@ -90,19 +94,44 @@ class EchoPipeline:
             session.mark_stage("tts_first_audio", now, record_dashboard=False)
             log.info("[ECHO] Echo started")
         self._echoed_bytes += len(pcm)
+        # Jitter buffer: inbound audio arrives unevenly while the track sends
+        # exactly one 20 ms frame per 20 ms, inserting silence whenever it runs
+        # dry. Hold audio until a prebuffer is ready (again after any underrun)
+        # so playback stays continuous instead of chopped into noise.
+        # (WebSocket clients schedule playback themselves: no ai_track there.)
+        starved = session.ai_track is not None and self._outbound_starved()
+        if starved and not self._held and self._echoed_bytes > len(pcm):
+            self._underruns += 1
+        if self._held or starved:
+            self._held += pcm
+            if len(self._held) < self._prebuffer_bytes:
+                return
+            pcm = bytes(self._held)
+            self._held.clear()
         session.tts_audio_queue.put_nowait(pcm)
+
+    def _outbound_starved(self) -> bool:
+        """True when no echo audio is waiting to be sent."""
+        session = self.session
+        if not session.tts_audio_queue.empty():
+            return False
+        track = session.ai_track
+        return track is None or not track.has_pending
 
     def _end_echo(self, detail: str) -> None:
         if not self._echoing:
             return
         self._echoing = False
         session = self.session
+        if self._held:
+            session.tts_audio_queue.put_nowait(bytes(self._held))
+            self._held.clear()
         session.mark_stage("speech_end")
         session.speech_end_reason = "marker" if "00 FE" in detail else "no-audio"
         session.tts_audio_queue.put_nowait(REPLY_END)
         log.info(
             f"[ECHO] Echo ended ({detail}): {self._echoed_bytes} bytes "
-            f"({self._echoed_bytes / (ECHO_RATE * 2):.2f}s)"
+            f"({self._echoed_bytes / (ECHO_RATE * 2):.2f}s), rebuffers={self._underruns}"
         )
 
     async def _no_audio_watchdog(self) -> None:

@@ -518,9 +518,10 @@ function wsUrl() {
 
 function playPcm(arrayBuffer) {
   if (!audioCtx) return;
-  const samples = new Int16Array(arrayBuffer);
+  // Server audio is 8 kHz s16 mono with a 2-byte 00 FF trailer per message.
+  const samples = new Int16Array(arrayBuffer, 0, (arrayBuffer.byteLength - 2) >> 1);
   if (!samples.length) return;
-  const buf = audioCtx.createBuffer(1, samples.length, audioCtx.sampleRate);
+  const buf = audioCtx.createBuffer(1, samples.length, 8000);
   const ch = buf.getChannelData(0);
   for (let i = 0; i < samples.length; i++) ch[i] = samples[i] / 32768;
   const src = audioCtx.createBufferSource();

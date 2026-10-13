@@ -32,6 +32,9 @@ class Settings:
     # End the utterance when no inbound audio arrives for this long while echoing
     # (the Soundbox stops sending RTP after its silence tail).
     vad_no_audio_ms: int = field(default_factory=lambda: int(os.getenv("VAD_NO_AUDIO_MS", "400")))
+    # Echo jitter buffer: audio held before playback starts (and after an
+    # underrun) so network jitter does not chop the echoed audio.
+    echo_prebuffer_ms: int = field(default_factory=lambda: int(os.getenv("ECHO_PREBUFFER_MS", "200")))
 
     # SNTP server used to check the host clock at startup (blank = skip).
     ntp_check_server: str = field(default_factory=lambda: os.getenv("NTP_CHECK_SERVER", "pool.ntp.org"))
