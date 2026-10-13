@@ -35,6 +35,12 @@ class Settings:
     # Echo jitter buffer: audio held before playback starts (and after an
     # underrun) so network jitter does not chop the echoed audio.
     echo_prebuffer_ms: int = field(default_factory=lambda: int(os.getenv("ECHO_PREBUFFER_MS", "200")))
+    # Debug: save every echoed utterance as WAV (GET /recordings) and log
+    # its level / zero-crossing stats; keep at most record_max_files files.
+    record_echo: bool = field(default_factory=lambda: os.getenv("RECORD_ECHO", "true").lower() in ("1", "true", "yes", "on"))
+    record_max_files: int = field(default_factory=lambda: int(os.getenv("RECORD_MAX_FILES", "100")))
+    # Debug: log this many raw inbound RTP packets per call (payload hex).
+    rtp_debug_packets: int = field(default_factory=lambda: int(os.getenv("RTP_DEBUG_PACKETS", "5")))
 
     # SNTP server used to check the host clock at startup (blank = skip).
     ntp_check_server: str = field(default_factory=lambda: os.getenv("NTP_CHECK_SERVER", "pool.ntp.org"))

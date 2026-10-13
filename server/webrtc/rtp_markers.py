@@ -39,6 +39,25 @@ def intercept_end_of_speech(receiver: Any, packet: Any) -> bool:
     return True
 
 
+def log_raw_packet(receiver: Any, packet: Any) -> None:
+    """Debug: log the first RTP_DEBUG_PACKETS inbound packets as received."""
+    from config import settings
+
+    seen = getattr(receiver, "_debug_packets_logged", 0)
+    if seen >= settings.rtp_debug_packets:
+        return
+    receiver._debug_packets_logged = seen + 1
+    codecs = getattr(receiver, "_RTCRtpReceiver__codecs", {})
+    codec = codecs.get(packet.payload_type)
+    name = f"{codec.mimeType}/{codec.clockRate}" if codec is not None else "unknown"
+    payload = bytes(packet.payload)
+    log.info(
+        f"[WEBRTC] RTP in #{seen + 1}: pt={packet.payload_type} ({name}) "
+        f"seq={packet.sequence_number} ts={packet.timestamp} marker={packet.marker} "
+        f"len={len(payload)} head={payload[:24].hex(' ')}"
+    )
+
+
 def install_end_of_speech_hook() -> None:
     global _installed
     if _installed:
@@ -46,6 +65,7 @@ def install_end_of_speech_hook() -> None:
     original = RTCRtpReceiver._handle_rtp_packet
 
     async def handle_rtp_packet(self: Any, packet: Any, arrival_time_ms: int) -> None:
+        log_raw_packet(self, packet)
         intercept_end_of_speech(self, packet)
         await original(self, packet, arrival_time_ms)
 

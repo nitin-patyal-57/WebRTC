@@ -19,7 +19,7 @@ from config import settings  # noqa: E402
 # Reads ICE_CONSENT_FAILURES from .env - must run after the config import.
 install_aioice_consent_grace()
 
-from api import dashboard, health, webrtc, ws  # noqa: E402
+from api import dashboard, health, recordings, webrtc, ws  # noqa: E402
 from utils.logger import get_logger, ice_debug_enabled  # noqa: E402
 
 log = get_logger("APP")
@@ -34,6 +34,7 @@ app.include_router(webrtc.router)
 app.include_router(webrtc.sessions_router)
 app.include_router(ws.router)
 app.include_router(dashboard.router)
+app.include_router(recordings.router)
 
 if CLIENT_DIR.exists():
     app.mount("/client", StaticFiles(directory=str(CLIENT_DIR)), name="client")

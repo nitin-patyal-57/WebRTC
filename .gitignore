@@ -15,6 +15,9 @@ venv/
 # Logs
 *.log
 
+# Echo debug recordings
+server/recordings/
+
 # Learned runtime answers (per-deployment)
 server/data/answer_cache.json
 server/data/answer_cache.tmp

@@ -1,7 +1,9 @@
+import array
 import asyncio
 import time
 
 from audio.processor import AudioProcessor
+from audio.recorder import pcm_stats, recording_name, save_wav
 from config import settings
 from utils.logger import get_logger
 from webrtc.session import END_OF_SPEECH, REPLY_END, Session
@@ -34,6 +36,13 @@ class EchoPipeline:
         self._held = bytearray()  # jitter prebuffer, see _echo
         self._prebuffer_bytes = max(1, settings.echo_prebuffer_ms * ECHO_RATE * 2 // 1000)
         self._last_audio_time = time.monotonic()
+        # Debug recording of each utterance (RECORD_ECHO): the 8 kHz audio
+        # that is echoed back, and the decoded input before resampling.
+        self._utterances = 0
+        self._rec_pcm = bytearray()
+        self._rec_raw = bytearray()
+        self._raw_format = ""
+        self._raw_rate = 0
 
     async def start(self) -> None:
         session = self.session
@@ -79,6 +88,19 @@ class EchoPipeline:
             self._last_audio_time = time.monotonic()
             for pcm in self.processor.process(frame):
                 self._echo(pcm)
+            if self._echoing and settings.record_echo:
+                self._record_raw(frame)
+
+    def _record_raw(self, frame) -> None:
+        """Keep the first channel of the decoded input frame (s16 only)."""
+        channels = len(frame.layout.channels)
+        self._raw_format = f"{frame.format.name} {frame.sample_rate}Hz ch={channels}"
+        self._raw_rate = frame.sample_rate
+        if frame.format.name != "s16":
+            return
+        samples = array.array("h")
+        samples.frombytes(bytes(frame.planes[0])[: frame.samples * 2 * channels])
+        self._rec_raw += samples[::channels].tobytes()
 
     def _echo(self, pcm: bytes) -> None:
         session = self.session
@@ -86,6 +108,9 @@ class EchoPipeline:
             self._echoing = True
             self._echoed_bytes = 0
             self._underruns = 0
+            self._utterances += 1
+            self._rec_pcm.clear()
+            self._rec_raw.clear()
             session.finish_turn()
             session.begin_turn()
             now = time.time() * 1000.0
@@ -94,6 +119,8 @@ class EchoPipeline:
             session.mark_stage("tts_first_audio", now, record_dashboard=False)
             log.info("[ECHO] Echo started")
         self._echoed_bytes += len(pcm)
+        if settings.record_echo:
+            self._rec_pcm += pcm
         # Jitter buffer: inbound audio arrives unevenly while the track sends
         # exactly one 20 ms frame per 20 ms, inserting silence whenever it runs
         # dry. Hold audio until a prebuffer is ready (again after any underrun)
@@ -133,6 +160,31 @@ class EchoPipeline:
             f"[ECHO] Echo ended ({detail}): {self._echoed_bytes} bytes "
             f"({self._echoed_bytes / (ECHO_RATE * 2):.2f}s), rebuffers={self._underruns}"
         )
+        if settings.record_echo:
+            self._save_recording()
+
+    def _save_recording(self) -> None:
+        """Save the utterance and log its stats (zcr ~0.5 = noise, not speech)."""
+        sid = self.session.session_id
+        try:
+            echo = save_wav(recording_name(sid, self._utterances, "echo8k"), bytes(self._rec_pcm), ECHO_RATE)
+            raw_note = ""
+            if self._rec_raw:
+                raw = save_wav(
+                    recording_name(sid, self._utterances, f"in{self._raw_rate}"),
+                    bytes(self._rec_raw),
+                    self._raw_rate,
+                )
+                raw_note = f" in={pcm_stats(bytes(self._rec_raw))} file=/recordings/{raw.name}"
+            log.info(
+                f"[ECHO] Recorded utterance {self._utterances} input=({self._raw_format}) "
+                f"echo={pcm_stats(bytes(self._rec_pcm))} file=/recordings/{echo.name}{raw_note}"
+            )
+        except Exception as exc:
+            log.error(f"[ECHO] Recording failed: {exc!r}")
+        finally:
+            self._rec_pcm.clear()
+            self._rec_raw.clear()
 
     async def _no_audio_watchdog(self) -> None:
         """Close the echoed reply when inbound audio stops arriving."""
