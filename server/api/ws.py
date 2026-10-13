@@ -69,7 +69,7 @@ async def voice_websocket(
     device_id: str = Query(default="WS_DEVICE"),
     sample_rate: int = Query(default=8000),
 ) -> None:
-    from pipeline.voice_pipeline import VoicePipeline
+    from pipeline.echo_pipeline import EchoPipeline
     from webrtc.session import session_manager
 
     await websocket.accept()
@@ -93,7 +93,7 @@ async def voice_websocket(
         f"rate={sample_rate} client={websocket.client}"
     )
 
-    pipeline = VoicePipeline(session)
+    pipeline = EchoPipeline(session)
     pump_task = asyncio.create_task(_pump_tts_to_ws(session), name=f"wspump:{session.session_id[:8]}")
     try:
         await pipeline.start()

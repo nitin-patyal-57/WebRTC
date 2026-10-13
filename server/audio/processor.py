@@ -12,10 +12,11 @@ TARGET_RATE = 16000
 
 
 class AudioProcessor:
-    """Converts WebRTC audio frames (48kHz stereo float) to 16kHz mono 16-bit PCM."""
+    """Converts WebRTC audio frames (48kHz stereo float) to mono 16-bit PCM (16kHz by default)."""
 
-    def __init__(self) -> None:
-        self._resampler = AudioResampler(format=TARGET_FORMAT, layout=TARGET_LAYOUT, rate=TARGET_RATE)
+    def __init__(self, rate: int = TARGET_RATE) -> None:
+        self.rate = rate
+        self._resampler = AudioResampler(format=TARGET_FORMAT, layout=TARGET_LAYOUT, rate=rate)
         self._input_frames = 0
         self._output_chunks = 0
 
@@ -34,7 +35,7 @@ class AudioProcessor:
         if self._input_frames == 1 and chunks:
             log.info(
                 f"[AUDIO] Resampler engaged: in={frame.sample_rate}Hz "
-                f"{frame.format.name} -> out={TARGET_RATE}Hz {TARGET_FORMAT} mono, "
+                f"{frame.format.name} -> out={self.rate}Hz {TARGET_FORMAT} mono, "
                 f"first chunk={len(chunks[0])} bytes"
             )
         return chunks

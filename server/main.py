@@ -46,7 +46,7 @@ async def index() -> FileResponse:
 
 @app.on_event("startup")
 async def on_startup() -> None:
-    log.info("[APP] AI Voice Support starting")
+    log.info("[APP] Voice echo server starting")
     log.info(f"[APP] STUN: {settings.stun_urls}")
     log.info(f"[APP] TURN configured: {bool(settings.turn_url)}")
     if ice_debug_enabled():
@@ -54,7 +54,6 @@ async def on_startup() -> None:
             "[APP] ICE debug ON: tracing STUN in/out and consent "
             "(look for 'Consent to send expired' or 400 replies before a drop)"
         )
-    log.info(f"[APP] Groq key set: {bool(settings.groq_api_key)}")
     from utils.clock import check_clock
 
     asyncio.create_task(check_clock(settings.ntp_check_server))

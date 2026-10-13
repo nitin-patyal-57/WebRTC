@@ -2,7 +2,12 @@
 
 Real-time, low-latency voice AI over WebRTC:
 
-**Mic → WebRTC → FastAPI → VAD → STT → LLM → TTS → WebRTC → Speaker**
+**Mic → WebRTC → FastAPI → WebRTC → Speaker** (echo)
+
+> **Echo branch:** the AI pipeline (VAD/STT/LLM/TTS, knowledge base, live answers) is removed.
+> The server sends every received audio frame straight back (`server/pipeline/echo_pipeline.py`),
+> resampled to 8 kHz mono. The echoed reply ends with the `00 FF` marker when the device sends
+> `00 FE` or inbound audio stops for `VAD_NO_AUDIO_MS`. Sections below describing the AI stack are historical.
 
 Designed for a smart payment soundbox today; ESP32 + SIM7600 (cellular) later.
 

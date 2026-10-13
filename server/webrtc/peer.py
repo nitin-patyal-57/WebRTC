@@ -97,10 +97,10 @@ def create_peer_connection(session: Session) -> RTCPeerConnection:
         session.state = state
         log.info(f"[WEBRTC] Connection state [{session.device_id}]: {state}")
         if state == "connected" and session.pipeline is None:
-            from pipeline.voice_pipeline import VoicePipeline
+            from pipeline.echo_pipeline import EchoPipeline
 
             try:
-                pipeline = VoicePipeline(session)
+                pipeline = EchoPipeline(session)
                 await pipeline.start()
             except Exception as exc:
                 log.error(f"[PIPELINE] Start failed: {exc!r}")

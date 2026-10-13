@@ -1,5 +1,4 @@
 import asyncio
-import math
 import sys
 import time
 from pathlib import Path
@@ -13,19 +12,10 @@ from av import AudioFrame
 
 from main import app
 from tests.phase1_client import ToneAudioTrack
-from webrtc.session import session_manager
 
 PORT = 8765
 SERVER = f"http://127.0.0.1:{PORT}"
 MIN_NONSILENT_FRAMES = 40  # ~0.8s of real audio
-
-
-def make_tts_pcm(seconds: float = 2.0, freq: float = 440.0, amp: float = 0.5) -> bytes:
-    n = int(48000 * seconds)
-    return b"".join(
-        int(amp * 32767 * math.sin(2 * math.pi * freq * i / 48000)).to_bytes(2, "little", signed=True)
-        for i in range(n)
-    )
 
 
 class AudioCounter:
@@ -111,16 +101,7 @@ async def main() -> int:
                 return 1
             print("[TEST] WebRTC connected")
 
-            await asyncio.sleep(1.0)
-            session = session_manager.get(session_id)
-            if session is None:
-                print("[TEST] FAIL — session not found in-process")
-                return 1
-
-            pcm = make_tts_pcm(2.0)
-            print(f"[TEST] injecting {len(pcm)} bytes of TTS PCM into tts_audio_queue")
-            await session.tts_audio_queue.put(pcm)
-
+            # The tone track's audio should come straight back (echo pipeline).
             deadline = time.time() + 10
             while time.time() < deadline and counter.nonsilent < MIN_NONSILENT_FRAMES:
                 await asyncio.sleep(0.1)
@@ -133,7 +114,7 @@ async def main() -> int:
                 f"server frames_sent={snapshot['audio_frames_sent']}"
             )
             ok = counter.nonsilent >= MIN_NONSILENT_FRAMES and snapshot["audio_frames_sent"] > 0
-            print(f"[TEST] webrtc ai audio -> {'PASS' if ok else 'FAIL'}")
+            print(f"[TEST] webrtc echo audio -> {'PASS' if ok else 'FAIL'}")
             return 0 if ok else 1
     finally:
         if session_id:
