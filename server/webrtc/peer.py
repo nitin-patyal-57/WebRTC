@@ -8,7 +8,7 @@ from aiortc.mediastreams import MediaStreamError
 from config import settings
 from utils.logger import get_logger
 from webrtc.audio_track import AIResponseAudioTrack
-from webrtc.rtp_markers import install_end_of_speech_hook
+from webrtc.rtp_markers import UplinkCapture, install_end_of_speech_hook
 from webrtc.session import Session, session_manager
 
 install_end_of_speech_hook()
@@ -70,7 +70,7 @@ async def _consume_audio_track(track, session: Session) -> None:
                 )
             if count % AUDIO_FRAME_LOG_EVERY == 0:
                 log.info(f"[WEBRTC] Audio frames received: {count}")
-            if session.pipeline is not None:
+            if session.pipeline is not None and not session.uplink_direct:
                 await session.audio_queue.put(frame)
     except asyncio.CancelledError:
         raise
@@ -144,6 +144,11 @@ def create_peer_connection(session: Session) -> RTCPeerConnection:
                 if transceiver.receiver.track is track:
                     # Device end-of-speech packet (00 FE), see rtp_markers.
                     transceiver.receiver._on_end_of_speech = session.on_end_of_speech
+                    # PCMU: echo every packet directly, see rtp_markers.
+                    transceiver.receiver._on_pcmu_audio = session.on_uplink_pcm
+                    if settings.record_echo:
+                        session.uplink_capture = UplinkCapture()
+                        transceiver.receiver._uplink_capture = session.uplink_capture
             asyncio.create_task(_consume_audio_track(track, session))
 
         @track.on("ended")

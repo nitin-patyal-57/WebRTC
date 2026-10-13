@@ -61,6 +61,11 @@ class Session:
     audio_sample_rate: int = 48000
     # Negotiated downlink codec mimeType (lowercase), e.g. "audio/pcmu".
     downlink_codec: Optional[str] = None
+    # Debug: raw inbound RTP capture (webrtc.rtp_markers.UplinkCapture).
+    uplink_capture: Any = None
+    # PCMU uplink is decoded per packet in the RTP hook (bypasses aiortc's
+    # jitter buffer); the track's decoded frames are then not queued.
+    uplink_direct: bool = False
 
     # Pipeline services (per-session isolation, wired in later phases)
     stt: Any = None
@@ -222,6 +227,12 @@ class Session:
         """RTP receiver hook: the device sent the 00 FE end-of-speech packet."""
         if self.pipeline is not None:
             self.audio_queue.put_nowait(END_OF_SPEECH)
+
+    def on_uplink_pcm(self, pcm: bytes) -> None:
+        """RTP receiver hook: one decoded PCMU packet (8 kHz s16 mono)."""
+        self.uplink_direct = True
+        if self.pipeline is not None:
+            self.audio_queue.put_nowait(pcm)
 
     def note_audio_chunk_sent(self, nbytes: int) -> None:
         """Called by the transport for every real (non-silence) audio chunk sent."""

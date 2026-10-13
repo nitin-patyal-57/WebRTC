@@ -86,6 +86,14 @@ class EchoPipeline:
                 self._end_echo("end-of-speech packet 00 FE")
                 continue
             self._last_audio_time = time.monotonic()
+            if isinstance(frame, bytes):
+                # Already 8 kHz s16 mono: PCMU decoded per RTP packet.
+                self._echo(frame)
+                if self._echoing and settings.record_echo:
+                    self._raw_format = "pcmu direct 8000Hz ch=1"
+                    self._raw_rate = ECHO_RATE
+                    self._rec_raw += frame
+                continue
             for pcm in self.processor.process(frame):
                 self._echo(pcm)
             if self._echoing and settings.record_echo:
@@ -176,6 +184,14 @@ class EchoPipeline:
                     self._raw_rate,
                 )
                 raw_note = f" in={pcm_stats(bytes(self._rec_raw))} file=/recordings/{raw.name}"
+            capture = self.session.uplink_capture
+            if capture is not None:
+                rtp_stats, rtp_pcm = capture.take()
+                rtp = save_wav(recording_name(sid, self._utterances, "rtp8k"), rtp_pcm, ECHO_RATE)
+                log.info(
+                    f"[ECHO] Uplink RTP utterance {self._utterances}: {rtp_stats} "
+                    f"pcm={pcm_stats(rtp_pcm)} file=/recordings/{rtp.name}"
+                )
             log.info(
                 f"[ECHO] Recorded utterance {self._utterances} input=({self._raw_format}) "
                 f"echo={pcm_stats(bytes(self._rec_pcm))} file=/recordings/{echo.name}{raw_note}"
