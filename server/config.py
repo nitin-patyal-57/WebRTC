@@ -37,7 +37,8 @@ class Settings:
     echo_prebuffer_ms: int = field(default_factory=lambda: int(os.getenv("ECHO_PREBUFFER_MS", "200")))
     # Echo mode: "live" streams audio back as it arrives; "hold" holds the
     # whole utterance and sends it back only after it ends (still paced).
-    echo_mode: str = field(default_factory=lambda: os.getenv("ECHO_MODE", "live").strip().lower())
+    # TEMPORARY: default is "hold" for a device test; revert to "live" after.
+    echo_mode: str = field(default_factory=lambda: os.getenv("ECHO_MODE", "hold").strip().lower())
     # Debug: save every echoed utterance as WAV (GET /recordings) and log
     # its level / zero-crossing stats; keep at most record_max_files files.
     record_echo: bool = field(default_factory=lambda: os.getenv("RECORD_ECHO", "true").lower() in ("1", "true", "yes", "on"))
