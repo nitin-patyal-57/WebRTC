@@ -20,6 +20,8 @@ class EchoPipeline:
     Inbound audio (any rate/layout) is resampled to 8kHz s16 mono and queued
     for the downlink. The reply is closed with REPLY_END (00 FF marker on
     PCMU) when the device sends end-of-speech (00 FE) or inbound audio stops.
+    With ECHO_MODE=hold the whole utterance is held and queued only once it
+    ends; the track still paces it at one 20 ms frame per 20 ms.
     """
 
     # The peer heartbeat reads pipeline.vad; the echo path has no VAD.
@@ -33,8 +35,9 @@ class EchoPipeline:
         self._echoing = False  # audio echoed since the last REPLY_END
         self._echoed_bytes = 0
         self._underruns = 0  # times the outbound ran dry mid-echo (rebuffered)
-        self._held = bytearray()  # jitter prebuffer, see _echo
+        self._held = bytearray()  # jitter prebuffer (or whole utterance in hold mode), see _echo
         self._prebuffer_bytes = max(1, settings.echo_prebuffer_ms * ECHO_RATE * 2 // 1000)
+        self._hold = settings.echo_mode == "hold"
         self._last_audio_time = time.monotonic()
         # Debug recording of each utterance (RECORD_ECHO): the 8 kHz audio
         # that is echoed back, and the decoded input before resampling.
@@ -51,7 +54,8 @@ class EchoPipeline:
             asyncio.create_task(self._audio_loop(), name=f"echo:{session.session_id[:8]}"),
             asyncio.create_task(self._no_audio_watchdog(), name=f"noaudio:{session.session_id[:8]}"),
         ]
-        log.info(f"[PIPELINE] Echo started for session {session.session_id}")
+        mode = "hold" if self._hold else "live"
+        log.info(f"[PIPELINE] Echo started for session {session.session_id} (mode={mode})")
 
     async def stop(self) -> None:
         if self._stopping:
@@ -129,6 +133,10 @@ class EchoPipeline:
         self._echoed_bytes += len(pcm)
         if settings.record_echo:
             self._rec_pcm += pcm
+        if self._hold:
+            # Sent back by _end_echo once the utterance ends.
+            self._held += pcm
+            return
         # Jitter buffer: inbound audio arrives unevenly while the track sends
         # exactly one 20 ms frame per 20 ms, inserting silence whenever it runs
         # dry. Hold audio until a prebuffer is ready (again after any underrun)
